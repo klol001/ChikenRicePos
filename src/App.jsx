@@ -16,9 +16,12 @@ const firebaseConfig = {
 const firebaseApp = initializeApp(firebaseConfig);
 const db = getDatabase(firebaseApp);
 
-// ─── PASSWORDS (change these!) ───────────────────────────────────────────────
+// ─── PASSWORDS ───────────────────────────────────────────────────────────────
 const STALL_PASSWORD = "unclelim123";
 const ADMIN_PASSWORD = "admin888";
+
+// ─── SESSION DURATION (minutes) ──────────────────────────────────────────────
+const SESSION_MINUTES = 60;
 
 // ─── DEFAULT MENU ─────────────────────────────────────────────────────────────
 const DEFAULT_MENU = [
@@ -49,55 +52,81 @@ const DEFAULT_MENU = [
   },
 ];
 
+const DEFAULT_HOURS = {
+  open: "07:00",
+  close: "15:00",
+  days: [1,2,3,4,5], // Mon–Fri
+  manualOpen: null, // null = follow schedule, true = force open, false = force closed
+};
+
 const EMOJIS = ["🍗","🍚","🍱","🥚","🌶️","🥤","🍵","💧","🍜","🥩","🧆","🫙","🧃","🥗","🍲","🫕","🧋","☕"];
 let nextId = 500;
 function genId() { return nextId++; }
 
-// ─── FIREBASE HELPERS ─────────────────────────────────────────────────────────
-async function fbGetMenu() {
-  try {
-    const snap = await get(ref(db, "menu"));
-    if (snap.exists()) return snap.val();
-    await set(ref(db, "menu"), DEFAULT_MENU);
-    return DEFAULT_MENU;
-  } catch { return DEFAULT_MENU; }
+// ─── HELPERS ──────────────────────────────────────────────────────────────────
+function isWithinHours(hours) {
+  if (hours.manualOpen === true) return true;
+  if (hours.manualOpen === false) return false;
+  const now = new Date();
+  const day = now.getDay(); // 0=Sun, 1=Mon...
+  if (!hours.days.includes(day)) return false;
+  const hhmm = now.getHours() * 60 + now.getMinutes();
+  const [oh, om] = hours.open.split(":").map(Number);
+  const [ch, cm] = hours.close.split(":").map(Number);
+  return hhmm >= oh * 60 + om && hhmm < ch * 60 + cm;
 }
-async function fbSetMenu(menu) { try { await set(ref(db, "menu"), menu); } catch(e) { console.error(e); } }
-async function fbGetQueue() {
-  try { const snap = await get(ref(db, "currentServing")); return snap.exists() ? snap.val() : 40; }
-  catch { return 40; }
-}
-async function fbSetQueue(n) { try { await set(ref(db, "currentServing"), n); } catch(e) { console.error(e); } }
-async function fbPushOrder(order) { try { await push(ref(db, "orders"), order); } catch(e) { console.error(e); } }
-async function fbUpdateOrder(fbKey, data) { try { await update(ref(db, `orders/${fbKey}`), data); } catch(e) { console.error(e); } }
 
-// ─── SHARED FIREBASE STATE HOOK ───────────────────────────────────────────────
+function formatTime(secs) {
+  const m = Math.floor(secs / 60).toString().padStart(2, "0");
+  const s = (secs % 60).toString().padStart(2, "0");
+  return `${m}:${s}`;
+}
+
+// ─── FIREBASE HELPERS ─────────────────────────────────────────────────────────
+async function fbGet(path, fallback) {
+  try { const s = await get(ref(db, path)); return s.exists() ? s.val() : fallback; }
+  catch { return fallback; }
+}
+async function fbSet(path, val) { try { await set(ref(db, path), val); } catch(e) { console.error(e); } }
+async function fbPush(path, val) { try { await push(ref(db, path), val); } catch(e) { console.error(e); } }
+async function fbUpdate(path, val) { try { await update(ref(db, path), val); } catch(e) { console.error(e); } }
+
+// ─── FIREBASE STATE HOOK ──────────────────────────────────────────────────────
 function useFirebaseState() {
   const [menu, setMenu] = useState(null);
   const [orders, setOrders] = useState([]);
   const [currentServing, setCurrentServing] = useState(40);
+  const [hours, setHours] = useState(null);
 
   useEffect(() => {
-    fbGetMenu().then(m => setMenu(m));
-    const unsubQ = onValue(ref(db, "currentServing"), snap => { if (snap.exists()) setCurrentServing(snap.val()); });
-    const unsubO = onValue(ref(db, "orders"), snap => {
-      if (snap.exists()) {
-        const arr = Object.entries(snap.val()).map(([fbKey, val]) => ({ ...val, fbKey }));
+    fbGet("menu", null).then(m => {
+      if (m) setMenu(m);
+      else { setMenu(DEFAULT_MENU); fbSet("menu", DEFAULT_MENU); }
+    });
+    fbGet("hours", DEFAULT_HOURS).then(h => setHours(h));
+
+    const unsubQ = onValue(ref(db, "currentServing"), s => { if (s.exists()) setCurrentServing(s.val()); });
+    const unsubO = onValue(ref(db, "orders"), s => {
+      if (s.exists()) {
+        const arr = Object.entries(s.val()).map(([k, v]) => ({ ...v, fbKey: k }));
         arr.sort((a, b) => a.timestamp - b.timestamp);
         setOrders(arr);
       } else setOrders([]);
     });
-    return () => { unsubQ(); unsubO(); };
+    const unsubH = onValue(ref(db, "hours"), s => { if (s.exists()) setHours(s.val()); });
+
+    return () => { unsubQ(); unsubO(); unsubH(); };
   }, []);
 
-  const updateMenu = useCallback(async (m) => { setMenu(m); await fbSetMenu(m); }, []);
-  const addOrder = useCallback(async (o) => { await fbPushOrder(o); }, []);
-  const markDone = useCallback(async (fbKey) => { await fbUpdateOrder(fbKey, { status: "done" }); }, []);
+  const updateMenu = useCallback(async m => { setMenu(m); await fbSet("menu", m); }, []);
+  const updateHours = useCallback(async h => { setHours(h); await fbSet("hours", h); }, []);
+  const addOrder = useCallback(async o => { await fbPush("orders", o); }, []);
+  const markDone = useCallback(async k => { await fbUpdate(`orders/${k}`, { status: "done" }); }, []);
   const advanceQueue = useCallback(async () => {
-    setCurrentServing(prev => { const n = prev + 1; fbSetQueue(n); return n; });
+    setCurrentServing(p => { const n = p + 1; fbSet("currentServing", n); return n; });
   }, []);
 
-  return { menu, orders, currentServing, updateMenu, addOrder, markDone, advanceQueue };
+  return { menu, orders, currentServing, hours, updateMenu, updateHours, addOrder, markDone, advanceQueue };
 }
 
 // ─── PASSWORD GATE ────────────────────────────────────────────────────────────
@@ -108,74 +137,133 @@ function PasswordGate({ correctPassword, label, icon, children }) {
   const [shake, setShake] = useState(false);
 
   function attempt() {
-    if (input === correctPassword) {
-      setUnlocked(true);
-    } else {
-      setError(true);
-      setShake(true);
-      setInput("");
+    if (input === correctPassword) { setUnlocked(true); }
+    else {
+      setError(true); setShake(true); setInput("");
       setTimeout(() => setShake(false), 500);
       setTimeout(() => setError(false), 2000);
     }
   }
 
   if (unlocked) return children;
-
   return (
-    <div style={{ minHeight:"100vh", background:"linear-gradient(135deg,#1a1a2e 0%,#16213e 100%)", display:"flex", alignItems:"center", justifyContent:"center", fontFamily:"'Segoe UI',sans-serif", padding:20 }}>
+    <div style={{ minHeight:"100vh", background:"linear-gradient(135deg,#1a1a2e,#16213e)", display:"flex", alignItems:"center", justifyContent:"center", fontFamily:"'Segoe UI',sans-serif", padding:20 }}>
       <style>{`@keyframes shake{0%,100%{transform:translateX(0)}25%{transform:translateX(-8px)}75%{transform:translateX(8px)}}`}</style>
-      <div style={{ background:"#1e2130", borderRadius:24, padding:"40px 32px", width:"100%", maxWidth:360, boxShadow:"0 20px 60px rgba(0,0,0,0.5)", animation: shake ? "shake 0.4s ease" : "none" }}>
+      <div style={{ background:"#1e2130", borderRadius:24, padding:"40px 32px", width:"100%", maxWidth:360, boxShadow:"0 20px 60px rgba(0,0,0,0.5)", animation:shake?"shake 0.4s ease":"none" }}>
         <div style={{ textAlign:"center", marginBottom:28 }}>
           <div style={{ fontSize:52, marginBottom:12 }}>{icon}</div>
           <div style={{ color:"white", fontSize:22, fontWeight:900 }}>{label}</div>
           <div style={{ color:"#666", fontSize:13, marginTop:6 }}>Enter password to continue</div>
         </div>
-        <div style={{ position:"relative", marginBottom:16 }}>
-          <input
-            type="password"
-            placeholder="Password"
-            value={input}
-            onChange={e => setInput(e.target.value)}
-            onKeyDown={e => e.key === "Enter" && attempt()}
-            autoFocus
-            style={{ width:"100%", background:"#2a2d3e", border: error ? "2px solid #ef4444" : "2px solid #3a3d4e", borderRadius:12, padding:"14px 16px", fontSize:16, color:"white", outline:"none", boxSizing:"border-box", fontFamily:"inherit" }}
-          />
+        <input type="password" placeholder="Password" value={input} onChange={e=>setInput(e.target.value)} onKeyDown={e=>e.key==="Enter"&&attempt()} autoFocus
+          style={{ width:"100%", background:"#2a2d3e", border:error?"2px solid #ef4444":"2px solid #3a3d4e", borderRadius:12, padding:"14px 16px", fontSize:16, color:"white", outline:"none", boxSizing:"border-box", fontFamily:"inherit", marginBottom:12 }}/>
+        {error && <div style={{ color:"#ef4444", fontSize:13, textAlign:"center", marginBottom:12, fontWeight:600 }}>❌ Wrong password</div>}
+        <button onClick={attempt} style={{ width:"100%", background:"#c8102e", color:"white", border:"none", borderRadius:12, padding:"15px", fontSize:15, fontWeight:700, cursor:"pointer" }}>Unlock →</button>
+        <div style={{ textAlign:"center", marginTop:20 }}><a href="/" style={{ color:"#444", fontSize:12, textDecoration:"none" }}>← Back to ordering</a></div>
+      </div>
+    </div>
+  );
+}
+
+// ─── ROOT APP ─────────────────────────────────────────────────────────────────
+export default function App() {
+  const state = useFirebaseState();
+  if (!state.menu || !state.hours) return <LoadingScreen />;
+  return (
+    <BrowserRouter>
+      <Routes>
+        <Route path="/" element={<OrderGate state={state} />} />
+        <Route path="/stall" element={<PasswordGate correctPassword={STALL_PASSWORD} label="Stall Dashboard" icon="🧑‍🍳"><StallDashboard {...state} /></PasswordGate>} />
+        <Route path="/admin" element={<PasswordGate correctPassword={ADMIN_PASSWORD} label="Admin Panel" icon="⚙️"><AdminPanel menu={state.menu} hours={state.hours} onUpdateMenu={state.updateMenu} onUpdateHours={state.updateHours} /></PasswordGate>} />
+        <Route path="/qr" element={<QRPage />} />
+        <Route path="*" element={<NotFound />} />
+      </Routes>
+    </BrowserRouter>
+  );
+}
+
+// ─── ORDER GATE (checks hours + starts session timer) ────────────────────────
+function OrderGate({ state }) {
+  const { hours, menu, currentServing, addOrder } = state;
+  const [sessionState, setSessionState] = useState("checking"); // checking | open | closed | expired
+  const [secondsLeft, setSecondsLeft] = useState(SESSION_MINUTES * 60);
+
+  useEffect(() => {
+    if (!hours) return;
+    if (isWithinHours(hours)) {
+      setSessionState("open");
+      setSecondsLeft(SESSION_MINUTES * 60);
+    } else {
+      setSessionState("closed");
+    }
+  }, [hours]);
+
+  // Session countdown
+  useEffect(() => {
+    if (sessionState !== "open") return;
+    const t = setInterval(() => {
+      setSecondsLeft(prev => {
+        if (prev <= 1) { clearInterval(t); setSessionState("expired"); return 0; }
+        return prev - 1;
+      });
+    }, 1000);
+    return () => clearInterval(t);
+  }, [sessionState]);
+
+  if (sessionState === "checking") return <LoadingScreen />;
+  if (sessionState === "closed") return <ClosedScreen hours={hours} />;
+  if (sessionState === "expired") return <ExpiredScreen />;
+
+  return <OrderFlow menu={menu} currentServing={currentServing} addOrder={addOrder} secondsLeft={secondsLeft} />;
+}
+
+// ─── CLOSED SCREEN ────────────────────────────────────────────────────────────
+function ClosedScreen({ hours }) {
+  const dayNames = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
+  const days = hours.days.map(d => dayNames[d]).join(", ");
+  return (
+    <div style={{ minHeight:"100vh", background:"linear-gradient(135deg,#1a1a2e,#16213e)", display:"flex", alignItems:"center", justifyContent:"center", fontFamily:"'Segoe UI',sans-serif", padding:20 }}>
+      <div style={{ textAlign:"center", maxWidth:340 }}>
+        <div style={{ fontSize:80, marginBottom:16 }}>🔒</div>
+        <div style={{ color:"white", fontSize:26, fontWeight:900, marginBottom:8 }}>Canteen Closed</div>
+        <div style={{ color:"#666", fontSize:15, lineHeight:1.7, marginBottom:24 }}>
+          Uncle Lim's is currently closed.<br/>Come back during operating hours!
         </div>
-        {error && <div style={{ color:"#ef4444", fontSize:13, textAlign:"center", marginBottom:12, fontWeight:600 }}>❌ Wrong password, try again</div>}
-        <button onClick={attempt} style={{ width:"100%", background:"#c8102e", color:"white", border:"none", borderRadius:12, padding:"15px", fontSize:15, fontWeight:700, cursor:"pointer" }}>
-          Unlock →
-        </button>
-        <div style={{ textAlign:"center", marginTop:20 }}>
-          <a href="/" style={{ color:"#444", fontSize:12, textDecoration:"none" }}>← Back to ordering</a>
+        <div style={{ background:"#1e2130", borderRadius:16, padding:"20px 24px", border:"1px solid #2a2d3e" }}>
+          <div style={{ color:"#f59e0b", fontWeight:700, fontSize:13, marginBottom:12, textTransform:"uppercase", letterSpacing:"1px" }}>Operating Hours</div>
+          <div style={{ color:"white", fontSize:18, fontWeight:800 }}>{hours.open} – {hours.close}</div>
+          <div style={{ color:"#666", fontSize:13, marginTop:6 }}>{days}</div>
         </div>
       </div>
     </div>
   );
 }
 
-// ─── ROOT APP WITH ROUTER ─────────────────────────────────────────────────────
-export default function App() {
-  const state = useFirebaseState();
-
-  if (!state.menu) return <LoadingScreen />;
-
+// ─── EXPIRED SCREEN ───────────────────────────────────────────────────────────
+function ExpiredScreen() {
   return (
-    <BrowserRouter>
-      <Routes>
-        <Route path="/" element={<OrderFlow {...state} />} />
-        <Route path="/stall" element={
-          <PasswordGate correctPassword={STALL_PASSWORD} label="Stall Dashboard" icon="🧑‍🍳">
-            <StallDashboard {...state} />
-          </PasswordGate>
-        } />
-        <Route path="/admin" element={
-          <PasswordGate correctPassword={ADMIN_PASSWORD} label="Admin Panel" icon="⚙️">
-            <AdminPanel menu={state.menu} onUpdateMenu={state.updateMenu} />
-          </PasswordGate>
-        } />
-        <Route path="*" element={<NotFound />} />
-      </Routes>
-    </BrowserRouter>
+    <div style={{ minHeight:"100vh", background:"linear-gradient(135deg,#1a1a2e,#16213e)", display:"flex", alignItems:"center", justifyContent:"center", fontFamily:"'Segoe UI',sans-serif", padding:20 }}>
+      <div style={{ textAlign:"center", maxWidth:320 }}>
+        <div style={{ fontSize:80, marginBottom:16 }}>⏰</div>
+        <div style={{ color:"white", fontSize:26, fontWeight:900, marginBottom:8 }}>Session Expired</div>
+        <div style={{ color:"#666", fontSize:15, lineHeight:1.7, marginBottom:28 }}>
+          Your 60-minute ordering session has ended.<br/>Please scan the QR code again to order.
+        </div>
+        <div style={{ background:"#1e2130", borderRadius:16, padding:"16px 20px", border:"1px solid #c8102e44" }}>
+          <div style={{ color:"#c8102e", fontSize:13, fontWeight:700 }}>📱 Scan the QR code at the stall to start a new session</div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function LoadingScreen() {
+  return (
+    <div style={{ minHeight:"100vh", background:"linear-gradient(135deg,#c8102e,#8b0000)", display:"flex", alignItems:"center", justifyContent:"center", flexDirection:"column", gap:16, fontFamily:"'Segoe UI',sans-serif" }}>
+      <style>{`@keyframes pulse{0%,100%{transform:scale(1)}50%{transform:scale(1.15)}}`}</style>
+      <div style={{ fontSize:64, animation:"pulse 1s infinite" }}>🍗</div>
+      <div style={{ color:"white", fontSize:18, fontWeight:700 }}>Loading…</div>
+    </div>
   );
 }
 
@@ -189,18 +277,37 @@ function NotFound() {
   );
 }
 
-function LoadingScreen() {
+// ─── QR PAGE ──────────────────────────────────────────────────────────────────
+function QRPage() {
+  const url = window.location.origin;
+  // Generate a simple QR using a public API
+  const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(url)}`;
+
   return (
-    <div style={{ minHeight:"100vh", background:"linear-gradient(135deg,#c8102e,#8b0000)", display:"flex", alignItems:"center", justifyContent:"center", flexDirection:"column", gap:16, fontFamily:"'Segoe UI',sans-serif" }}>
-      <style>{`@keyframes pulse{0%,100%{transform:scale(1)}50%{transform:scale(1.15)}}`}</style>
-      <div style={{ fontSize:64, animation:"pulse 1s infinite" }}>🍗</div>
-      <div style={{ color:"white", fontSize:18, fontWeight:700 }}>Connecting…</div>
+    <div style={{ minHeight:"100vh", background:"white", display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", fontFamily:"'Segoe UI',sans-serif", padding:40, gap:24 }}>
+      <div style={{ fontSize:48 }}>🍗</div>
+      <div style={{ fontSize:28, fontWeight:900, color:"#1a1a2e" }}>Uncle Lim's Chicken Rice</div>
+      <div style={{ fontSize:16, color:"#666", fontWeight:600 }}>Scan to Order</div>
+      <div style={{ background:"white", padding:20, borderRadius:20, boxShadow:"0 4px 40px rgba(0,0,0,0.12)", border:"3px solid #c8102e" }}>
+        <img src={qrUrl} alt="QR Code" style={{ width:260, height:260, display:"block" }}/>
+      </div>
+      <div style={{ fontSize:14, color:"#999", textAlign:"center", maxWidth:280, lineHeight:1.7 }}>
+        Point your phone camera at this QR code to start ordering.<br/>
+        <strong style={{ color:"#c8102e" }}>Session expires after 60 minutes.</strong>
+      </div>
+      <div style={{ background:"#f4f1ec", borderRadius:12, padding:"10px 20px", fontSize:13, color:"#666" }}>
+        {url}
+      </div>
+      <button onClick={() => window.print()} style={{ background:"#1a1a2e", color:"white", border:"none", borderRadius:12, padding:"14px 32px", fontSize:15, fontWeight:700, cursor:"pointer", marginTop:8 }}>
+        🖨️ Print this QR
+      </button>
+      <style>{`@media print { button { display:none; } }`}</style>
     </div>
   );
 }
 
-// ─── ORDER FLOW (Customer - route: /) ────────────────────────────────────────
-function OrderFlow({ menu, currentServing, addOrder }) {
+// ─── ORDER FLOW ───────────────────────────────────────────────────────────────
+function OrderFlow({ menu, currentServing, addOrder, secondsLeft }) {
   const [screen, setScreen] = useState("menu");
   const [cart, setCart] = useState({});
   const [note, setNote] = useState("");
@@ -212,6 +319,7 @@ function OrderFlow({ menu, currentServing, addOrder }) {
   const cartItems = Object.values(cart).filter(i => i.qty > 0);
   const total = cartItems.reduce((s, i) => s + i.price * i.qty, 0);
   const totalQty = cartItems.reduce((s, i) => s + i.qty, 0);
+  const isLow = secondsLeft <= 300; // under 5 min = red
 
   function add(item) { setCart(p => ({ ...p, [item.id]: { ...item, qty: (p[item.id]?.qty||0)+1 } })); }
   function remove(id) {
@@ -244,22 +352,26 @@ function OrderFlow({ menu, currentServing, addOrder }) {
   return (
     <div style={S.shell}>
       <div style={S.phone}>
+        {/* Session Timer Banner */}
+        <div style={{ background: isLow ? "#ef4444" : "#1a1a2e", padding:"8px 16px", display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+          <span style={{ color: isLow ? "white" : "#666", fontSize:12, fontWeight:600 }}>
+            {isLow ? "⚠️ Session ending soon!" : "⏱ Session"}
+          </span>
+          <span style={{ color: isLow ? "white" : "#f59e0b", fontSize:14, fontWeight:800, fontFamily:"monospace" }}>
+            {formatTime(secondsLeft)}
+          </span>
+        </div>
+
         {screen === "menu" && <>
           <div style={S.header}>
             <div style={{ flex:1 }}>
               <div style={S.stallName}>Uncle Lim's 🍗</div>
               <div style={S.stallSub}>Block A Canteen · Self Order</div>
             </div>
-            <div style={{ background:"rgba(255,255,255,0.2)", borderRadius:20, padding:"4px 12px", fontSize:11, fontWeight:700, color:"white" }}>
-              🟢 Open
-            </div>
+            <div style={{ background:"rgba(255,255,255,0.2)", borderRadius:20, padding:"4px 12px", fontSize:11, fontWeight:700, color:"white" }}>🟢 Open</div>
           </div>
           <div style={S.tabs}>
-            {menu.map(g => (
-              <button key={g.id} style={{...S.tab,...(activeCategory===g.id?S.tabActive:{})}} onClick={()=>setActiveCategory(g.id)}>
-                {g.category}
-              </button>
-            ))}
+            {menu.map(g => <button key={g.id} style={{...S.tab,...(activeCategory===g.id?S.tabActive:{})}} onClick={()=>setActiveCategory(g.id)}>{g.category}</button>)}
           </div>
           <div style={S.itemList}>
             {activeGroup?.items.map(item => {
@@ -282,13 +394,9 @@ function OrderFlow({ menu, currentServing, addOrder }) {
               );
             })}
           </div>
-          {totalQty>0&&(
-            <button style={S.cartBar} onClick={()=>setScreen("cart")}>
-              <span style={S.cartBadge}>{totalQty}</span>
-              <span>View Order</span>
-              <span>RM {total.toFixed(2)}</span>
-            </button>
-          )}
+          {totalQty>0&&<button style={S.cartBar} onClick={()=>setScreen("cart")}>
+            <span style={S.cartBadge}>{totalQty}</span><span>View Order</span><span>RM {total.toFixed(2)}</span>
+          </button>}
         </>}
 
         {screen==="cart"&&<>
@@ -300,10 +408,7 @@ function OrderFlow({ menu, currentServing, addOrder }) {
             {cartItems.map(item=>(
               <div key={item.id} style={S.cartRow}>
                 <div style={{fontSize:28}}>{item.emoji}</div>
-                <div style={{flex:1}}>
-                  <div style={S.itemName}>{item.name}</div>
-                  <div style={S.itemPrice}>RM {item.price.toFixed(2)}</div>
-                </div>
+                <div style={{flex:1}}><div style={S.itemName}>{item.name}</div><div style={S.itemPrice}>RM {item.price.toFixed(2)}</div></div>
                 <div style={S.qtyCtrl}>
                   <button style={S.qtyBtn} onClick={()=>remove(item.id)}>−</button>
                   <span style={S.qtyNum}>{item.qty}</span>
@@ -338,7 +443,7 @@ function OrderFlow({ menu, currentServing, addOrder }) {
               <button style={{...S.bigBtn,background:"#0066cc",width:"100%"}} onClick={simulatePay}>✓ Simulate Payment (Demo)</button>
               <div style={{fontSize:11,color:"#bbb",textAlign:"center"}}>* Real TNG integration requires merchant account</div>
             </>}
-            {payStep==="processing"&&<div style={{textAlign:"center"}}><div style={{fontSize:56}}>⏳</div><div style={{fontSize:20,fontWeight:700,marginTop:16,color:"#333"}}>Processing payment…</div></div>}
+            {payStep==="processing"&&<div style={{textAlign:"center"}}><div style={{fontSize:56}}>⏳</div><div style={{fontSize:20,fontWeight:700,marginTop:16,color:"#333"}}>Processing…</div></div>}
             {payStep==="done"&&<div style={{textAlign:"center"}}><div style={{fontSize:64}}>✅</div><div style={{fontSize:20,fontWeight:700,marginTop:16,color:"#333"}}>{placing?"Placing order…":"Payment successful!"}</div></div>}
           </div>
         </>}
@@ -371,37 +476,63 @@ function FakeQR() {
   );
 }
 
-// ─── STALL DASHBOARD (route: /stall) ─────────────────────────────────────────
-function StallDashboard({ orders, currentServing, advanceQueue, markDone }) {
+// ─── STALL DASHBOARD ──────────────────────────────────────────────────────────
+function StallDashboard({ orders, currentServing, advanceQueue, markDone, hours, updateHours }) {
   const pending = orders.filter(o => o.status==="pending");
   const done = orders.filter(o => o.status==="done");
   const prevPending = useRef(pending.length);
   const [newOrder, setNewOrder] = useState(false);
+  const isOpen = hours ? isWithinHours(hours) : false;
 
   useEffect(() => {
     if (pending.length > prevPending.current) { setNewOrder(true); setTimeout(()=>setNewOrder(false),3000); }
     prevPending.current = pending.length;
   }, [pending.length]);
 
+  function toggleManual() {
+    const h = { ...hours };
+    if (h.manualOpen === true) h.manualOpen = null;
+    else if (h.manualOpen === false) h.manualOpen = null;
+    else h.manualOpen = !isOpen;
+    updateHours(h);
+  }
+
   return (
     <div style={{minHeight:"100vh",background:"#0f1117",fontFamily:"'Segoe UI',sans-serif",display:"flex",flexDirection:"column"}}>
       <style>{`@keyframes slidein{from{transform:translateY(-100%)}to{transform:translateY(0)}}`}</style>
-      {newOrder&&(
-        <div style={{position:"fixed",top:0,left:0,right:0,zIndex:999,background:"#10b981",color:"white",padding:"16px",textAlign:"center",fontSize:16,fontWeight:800,animation:"slidein 0.3s ease"}}>
-          🔔 New Order Received!
-        </div>
-      )}
+      {newOrder&&<div style={{position:"fixed",top:0,left:0,right:0,zIndex:999,background:"#10b981",color:"white",padding:"16px",textAlign:"center",fontSize:16,fontWeight:800,animation:"slidein 0.3s ease"}}>🔔 New Order!</div>}
+
       <div style={{background:"#1a1a2e",padding:"16px 20px",display:"flex",alignItems:"center",gap:12,borderBottom:"3px solid #c8102e"}}>
         <div style={{flex:1}}>
           <div style={{color:"white",fontSize:20,fontWeight:900}}>🧑‍🍳 Stall Dashboard</div>
           <div style={{color:"#aaa",fontSize:12,display:"flex",alignItems:"center",gap:6}}>
-            <div style={{width:6,height:6,borderRadius:"50%",background:"#10b981"}}></div>
-            Live · Uncle Lim's Chicken Rice
+            <div style={{width:6,height:6,borderRadius:"50%",background: isOpen?"#10b981":"#ef4444"}}></div>
+            {isOpen ? "Open · Accepting orders" : "Closed · Not accepting orders"}
           </div>
         </div>
         <div style={{textAlign:"right"}}>
           <div style={{color:"#aaa",fontSize:11,fontWeight:600}}>NOW SERVING</div>
           <div style={{color:"#c8102e",fontSize:32,fontWeight:900,lineHeight:1}}>#{currentServing}</div>
+        </div>
+      </div>
+
+      {/* Manual open/close toggle */}
+      <div style={{padding:"12px 14px",background:"#16181f",borderBottom:"1px solid #1e2130"}}>
+        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+          <div>
+            <div style={{color:"white",fontSize:14,fontWeight:700}}>Manual Override</div>
+            <div style={{color:"#555",fontSize:12}}>{hours?.manualOpen===null||hours?.manualOpen===undefined?"Following schedule":"Override active"}</div>
+          </div>
+          <div style={{display:"flex",gap:8}}>
+            <button style={{background: isOpen&&hours?.manualOpen!==true?"#1e2130":"#10b981", color:"white", border:"none", borderRadius:10, padding:"8px 16px", fontSize:13, fontWeight:700, cursor:"pointer"}}
+              onClick={() => updateHours({...hours, manualOpen: true})}>Force Open</button>
+            <button style={{background: !isOpen&&hours?.manualOpen!==false?"#1e2130":"#ef4444", color:"white", border:"none", borderRadius:10, padding:"8px 16px", fontSize:13, fontWeight:700, cursor:"pointer"}}
+              onClick={() => updateHours({...hours, manualOpen: false})}>Force Close</button>
+            {hours?.manualOpen!==null&&hours?.manualOpen!==undefined&&(
+              <button style={{background:"#2a2d3e",color:"#aaa",border:"none",borderRadius:10,padding:"8px 12px",fontSize:12,fontWeight:600,cursor:"pointer"}}
+                onClick={() => updateHours({...hours, manualOpen: null})}>Auto</button>
+            )}
+          </div>
         </div>
       </div>
 
@@ -425,27 +556,15 @@ function StallDashboard({ orders, currentServing, advanceQueue, markDone }) {
       </div>
 
       <div style={{flex:1,overflowY:"auto",padding:"0 14px 14px",display:"flex",flexDirection:"column",gap:10}}>
-        {pending.length===0&&(
-          <div style={{textAlign:"center",color:"#333",padding:"48px 0",fontSize:15}}>
-            <div style={{fontSize:40,marginBottom:12}}>✅</div>
-            No pending orders<br/><span style={{fontSize:13,color:"#2a2a2a"}}>Waiting for students to order…</span>
-          </div>
-        )}
+        {pending.length===0&&<div style={{textAlign:"center",color:"#333",padding:"48px 0",fontSize:15}}><div style={{fontSize:40,marginBottom:12}}>✅</div>No pending orders</div>}
         {pending.map(order=>(
           <div key={order.fbKey} style={{background:"#1e2130",borderRadius:16,padding:"16px",border:"1px solid #f59e0b44"}}>
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
-              <div>
-                <div style={{color:"white",fontWeight:900,fontSize:20}}>Queue <span style={{color:"#f59e0b"}}>#{order.queueNum}</span></div>
-                <div style={{color:"#555",fontSize:12}}>{order.time}</div>
-              </div>
+              <div><div style={{color:"white",fontWeight:900,fontSize:20}}>Queue <span style={{color:"#f59e0b"}}>#{order.queueNum}</span></div><div style={{color:"#555",fontSize:12}}>{order.time}</div></div>
               <div style={{color:"#10b981",fontWeight:800,fontSize:18}}>RM {order.total.toFixed(2)}</div>
             </div>
             <div style={{display:"flex",flexDirection:"column",gap:5,marginBottom:10}}>
-              {order.items.map((item,i)=>(
-                <div key={i} style={{display:"flex",justifyContent:"space-between",color:"#ccc",fontSize:14}}>
-                  <span>{item.emoji} {item.name}</span><span style={{color:"#666"}}>×{item.qty}</span>
-                </div>
-              ))}
+              {order.items.map((item,i)=><div key={i} style={{display:"flex",justifyContent:"space-between",color:"#ccc",fontSize:14}}><span>{item.emoji} {item.name}</span><span style={{color:"#666"}}>×{item.qty}</span></div>)}
             </div>
             {order.note&&<div style={{background:"#2a2d3e",borderRadius:8,padding:"8px 12px",color:"#f59e0b",fontSize:12,marginBottom:10}}>📝 {order.note}</div>}
             <button style={{width:"100%",background:"#10b981",color:"white",border:"none",borderRadius:10,padding:"13px",fontSize:14,fontWeight:700,cursor:"pointer"}} onClick={()=>markDone(order.fbKey)}>
@@ -470,15 +589,18 @@ function StallDashboard({ orders, currentServing, advanceQueue, markDone }) {
   );
 }
 
-// ─── ADMIN PANEL (route: /admin) ──────────────────────────────────────────────
-function AdminPanel({ menu, onUpdateMenu }) {
+// ─── ADMIN PANEL ──────────────────────────────────────────────────────────────
+function AdminPanel({ menu, hours, onUpdateMenu, onUpdateHours }) {
+  const [tab, setTab] = useState("menu"); // menu | hours
   const [activeCategory, setActiveCategory] = useState(menu[0]?.id);
   const [editing, setEditing] = useState(null);
   const [adding, setAdding] = useState(false);
   const [newCatName, setNewCatName] = useState("");
   const [addingCat, setAddingCat] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [localHours, setLocalHours] = useState(hours);
 
+  const DAY_NAMES = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
   const activeGroup = menu.find(g=>g.id===activeCategory);
   function showSaved() { setSaved(true); setTimeout(()=>setSaved(false),2000); }
   function toggleStock(catId,itemId) { onUpdateMenu(menu.map(g=>g.id===catId?{...g,items:g.items.map(i=>i.id===itemId?{...i,outOfStock:!i.outOfStock}:i)}:g)); showSaved(); }
@@ -487,66 +609,123 @@ function AdminPanel({ menu, onUpdateMenu }) {
   function addItem(catId,item) { onUpdateMenu(menu.map(g=>g.id===catId?{...g,items:[...g.items,{...item,id:genId(),outOfStock:false}]}:g)); setAdding(false); showSaved(); }
   function addCategory() { if(!newCatName.trim()) return; onUpdateMenu([...menu,{id:genId(),category:newCatName.trim(),items:[]}]); setNewCatName(""); setAddingCat(false); showSaved(); }
   function deleteCategory(catId) { if(menu.length<=1) return; const u=menu.filter(g=>g.id!==catId); onUpdateMenu(u); setActiveCategory(u[0].id); showSaved(); }
+  function saveHours() { onUpdateHours(localHours); showSaved(); }
+  function toggleDay(d) { const days = localHours.days.includes(d) ? localHours.days.filter(x=>x!==d) : [...localHours.days,d]; setLocalHours({...localHours,days}); }
 
   return (
     <div style={{minHeight:"100vh",background:"#f4f1ec",fontFamily:"'Segoe UI',sans-serif",display:"flex",flexDirection:"column"}}>
       <div style={{background:"#1a1a2e",padding:"16px 20px",display:"flex",alignItems:"center",gap:12}}>
-        <div style={{flex:1,color:"white",fontSize:18,fontWeight:900}}>⚙️ Menu Manager</div>
+        <div style={{flex:1,color:"white",fontSize:18,fontWeight:900}}>⚙️ Admin Panel</div>
         {saved&&<div style={{background:"#10b981",color:"white",borderRadius:8,padding:"6px 14px",fontSize:13,fontWeight:700}}>✓ Saved!</div>}
         <a href="/" style={{background:"rgba(255,255,255,0.1)",color:"white",borderRadius:8,padding:"8px 14px",fontSize:13,fontWeight:600,textDecoration:"none"}}>← Exit</a>
       </div>
 
-      <div style={{background:"white",borderBottom:"2px solid #e8e0d5",padding:"0 12px",display:"flex",alignItems:"center",overflowX:"auto",gap:4}}>
-        {menu.map(g=>(
-          <button key={g.id} style={{...S.tab,...(activeCategory===g.id?{...S.tabActive,color:"#1a1a2e",borderColor:"#1a1a2e"}:{})}} onClick={()=>setActiveCategory(g.id)}>{g.category}</button>
-        ))}
-        {addingCat?(
-          <div style={{display:"flex",gap:6,padding:"8px 0",alignItems:"center"}}>
-            <input autoFocus style={{border:"1.5px solid #ccc",borderRadius:8,padding:"6px 10px",fontSize:13,outline:"none",width:120}} placeholder="Category name" value={newCatName} onChange={e=>setNewCatName(e.target.value)} onKeyDown={e=>e.key==="Enter"&&addCategory()}/>
-            <button style={S.greenBtn} onClick={addCategory}>Add</button>
-            <button style={S.ghostBtn} onClick={()=>{setAddingCat(false);setNewCatName("");}}>✕</button>
-          </div>
-        ):(
-          <button style={{...S.tab,color:"#10b981",fontWeight:700,whiteSpace:"nowrap"}} onClick={()=>setAddingCat(true)}>+ Category</button>
-        )}
+      {/* Admin tabs */}
+      <div style={{background:"white",borderBottom:"2px solid #e8e0d5",display:"flex"}}>
+        <button style={{flex:1,padding:"14px",border:"none",background:"none",fontSize:14,fontWeight:700,cursor:"pointer",borderBottom:tab==="menu"?"3px solid #1a1a2e":"3px solid transparent",color:tab==="menu"?"#1a1a2e":"#999"}} onClick={()=>setTab("menu")}>🍗 Menu</button>
+        <button style={{flex:1,padding:"14px",border:"none",background:"none",fontSize:14,fontWeight:700,cursor:"pointer",borderBottom:tab==="hours"?"3px solid #1a1a2e":"3px solid transparent",color:tab==="hours"?"#1a1a2e":"#999"}} onClick={()=>setTab("hours")}>🕐 Hours</button>
+        <button style={{flex:1,padding:"14px",border:"none",background:"none",fontSize:14,fontWeight:700,cursor:"pointer",borderBottom:tab==="qr"?"3px solid #1a1a2e":"3px solid transparent",color:tab==="qr"?"#1a1a2e":"#999"}} onClick={()=>setTab("qr")}>📱 QR</button>
       </div>
 
-      {menu.length>1&&(
-        <div style={{padding:"10px 16px 0",display:"flex",justifyContent:"flex-end"}}>
-          <button style={{...S.ghostBtn,color:"#ef4444",borderColor:"#ef4444",fontSize:12}} onClick={()=>deleteCategory(activeCategory)}>🗑 Delete "{activeGroup?.category}"</button>
+      {/* MENU TAB */}
+      {tab==="menu"&&<>
+        <div style={{background:"white",borderBottom:"2px solid #e8e0d5",padding:"0 12px",display:"flex",alignItems:"center",overflowX:"auto",gap:4}}>
+          {menu.map(g=><button key={g.id} style={{...S.tab,...(activeCategory===g.id?{...S.tabActive,color:"#1a1a2e",borderColor:"#1a1a2e"}:{})}} onClick={()=>setActiveCategory(g.id)}>{g.category}</button>)}
+          {addingCat?(
+            <div style={{display:"flex",gap:6,padding:"8px 0",alignItems:"center"}}>
+              <input autoFocus style={{border:"1.5px solid #ccc",borderRadius:8,padding:"6px 10px",fontSize:13,outline:"none",width:120}} placeholder="Category name" value={newCatName} onChange={e=>setNewCatName(e.target.value)} onKeyDown={e=>e.key==="Enter"&&addCategory()}/>
+              <button style={S.greenBtn} onClick={addCategory}>Add</button>
+              <button style={S.ghostBtn} onClick={()=>{setAddingCat(false);setNewCatName("");}}>✕</button>
+            </div>
+          ):<button style={{...S.tab,color:"#10b981",fontWeight:700,whiteSpace:"nowrap"}} onClick={()=>setAddingCat(true)}>+ Category</button>}
+        </div>
+        {menu.length>1&&<div style={{padding:"10px 16px 0",display:"flex",justifyContent:"flex-end"}}><button style={{...S.ghostBtn,color:"#ef4444",borderColor:"#ef4444",fontSize:12}} onClick={()=>deleteCategory(activeCategory)}>🗑 Delete "{activeGroup?.category}"</button></div>}
+        <div style={{flex:1,overflowY:"auto",padding:"12px 16px",display:"flex",flexDirection:"column",gap:10}}>
+          {activeGroup?.items.map(item=>(
+            editing?.id===item.id?(
+              <EditForm key={item.id} item={item} catId={activeCategory} onSave={saveEdit} onCancel={()=>setEditing(null)}/>
+            ):(
+              <div key={item.id} style={{background:"white",borderRadius:14,padding:"14px",boxShadow:"0 2px 8px rgba(0,0,0,0.06)",border:item.outOfStock?"2px dashed #fca5a5":"2px solid transparent"}}>
+                <div style={{display:"flex",alignItems:"center",gap:12}}>
+                  <div style={{fontSize:30}}>{item.emoji}</div>
+                  <div style={{flex:1}}>
+                    <div style={{fontWeight:700,color:item.outOfStock?"#aaa":"#1a1a2e",fontSize:14}}>{item.name} {item.outOfStock&&<span style={S.outBadge}>Out of stock</span>}</div>
+                    <div style={{color:"#999",fontSize:12}}>{item.desc}</div>
+                    <div style={{color:"#c8102e",fontWeight:800,fontSize:14,marginTop:2}}>RM {item.price.toFixed(2)}</div>
+                  </div>
+                </div>
+                <div style={{display:"flex",gap:8,marginTop:12}}>
+                  <button style={{...S.ghostBtn,flex:1}} onClick={()=>setEditing(item)}>✏️ Edit</button>
+                  <button style={{...S.ghostBtn,flex:1,color:item.outOfStock?"#10b981":"#f59e0b",borderColor:item.outOfStock?"#10b981":"#f59e0b"}} onClick={()=>toggleStock(activeCategory,item.id)}>{item.outOfStock?"✓ Back in Stock":"⊘ Out of Stock"}</button>
+                  <button style={{...S.ghostBtn,color:"#ef4444",borderColor:"#ef4444",padding:"8px 12px"}} onClick={()=>deleteItem(activeCategory,item.id)}>🗑</button>
+                </div>
+              </div>
+            )
+          ))}
+          {adding?<EditForm catId={activeCategory} isNew onSave={addItem} onCancel={()=>setAdding(false)}/>:(
+            <button style={{background:"#1a1a2e",color:"white",border:"none",borderRadius:14,padding:"16px",fontSize:15,fontWeight:700,cursor:"pointer"}} onClick={()=>setAdding(true)}>+ Add New Item</button>
+          )}
+        </div>
+      </>}
+
+      {/* HOURS TAB */}
+      {tab==="hours"&&(
+        <div style={{flex:1,overflowY:"auto",padding:"16px",display:"flex",flexDirection:"column",gap:16}}>
+          <div style={{background:"white",borderRadius:16,padding:"20px",boxShadow:"0 2px 8px rgba(0,0,0,0.06)"}}>
+            <div style={{fontWeight:800,fontSize:15,color:"#1a1a2e",marginBottom:16}}>🕐 Operating Hours</div>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:16}}>
+              <div>
+                <div style={{fontSize:11,fontWeight:600,color:"#999",marginBottom:6}}>Opening Time</div>
+                <input type="time" value={localHours.open} onChange={e=>setLocalHours({...localHours,open:e.target.value})}
+                  style={{width:"100%",border:"1.5px solid #e0d9d0",borderRadius:8,padding:"10px",fontSize:15,outline:"none",boxSizing:"border-box"}}/>
+              </div>
+              <div>
+                <div style={{fontSize:11,fontWeight:600,color:"#999",marginBottom:6}}>Closing Time</div>
+                <input type="time" value={localHours.close} onChange={e=>setLocalHours({...localHours,close:e.target.value})}
+                  style={{width:"100%",border:"1.5px solid #e0d9d0",borderRadius:8,padding:"10px",fontSize:15,outline:"none",boxSizing:"border-box"}}/>
+              </div>
+            </div>
+            <div style={{fontSize:11,fontWeight:600,color:"#999",marginBottom:10}}>Open on these days</div>
+            <div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:20}}>
+              {DAY_NAMES.map((name,i)=>(
+                <button key={i} onClick={()=>toggleDay(i)}
+                  style={{padding:"8px 14px",borderRadius:20,border:"2px solid",fontSize:13,fontWeight:700,cursor:"pointer",
+                    borderColor:localHours.days.includes(i)?"#1a1a2e":"#ddd",
+                    background:localHours.days.includes(i)?"#1a1a2e":"white",
+                    color:localHours.days.includes(i)?"white":"#999"}}>
+                  {name}
+                </button>
+              ))}
+            </div>
+            <button style={{...S.greenBtn,width:"100%",padding:"14px",fontSize:15}} onClick={saveHours}>Save Hours</button>
+          </div>
+
+          <div style={{background:"white",borderRadius:16,padding:"20px",boxShadow:"0 2px 8px rgba(0,0,0,0.06)"}}>
+            <div style={{fontWeight:800,fontSize:15,color:"#1a1a2e",marginBottom:4}}>⏱ Session Duration</div>
+            <div style={{color:"#999",fontSize:13,marginBottom:16}}>How long students can order after scanning the QR code</div>
+            <div style={{background:"#f4f1ec",borderRadius:12,padding:"16px",textAlign:"center"}}>
+              <div style={{fontSize:36,fontWeight:900,color:"#c8102e"}}>60</div>
+              <div style={{color:"#666",fontSize:13,fontWeight:600}}>minutes per session</div>
+              <div style={{color:"#aaa",fontSize:11,marginTop:6}}>To change this, edit SESSION_MINUTES in App.jsx</div>
+            </div>
+          </div>
         </div>
       )}
 
-      <div style={{flex:1,overflowY:"auto",padding:"12px 16px",display:"flex",flexDirection:"column",gap:10}}>
-        {activeGroup?.items.map(item=>(
-          editing?.id===item.id?(
-            <EditForm key={item.id} item={item} catId={activeCategory} onSave={saveEdit} onCancel={()=>setEditing(null)}/>
-          ):(
-            <div key={item.id} style={{background:"white",borderRadius:14,padding:"14px",boxShadow:"0 2px 8px rgba(0,0,0,0.06)",border:item.outOfStock?"2px dashed #fca5a5":"2px solid transparent"}}>
-              <div style={{display:"flex",alignItems:"center",gap:12}}>
-                <div style={{fontSize:30}}>{item.emoji}</div>
-                <div style={{flex:1}}>
-                  <div style={{fontWeight:700,color:item.outOfStock?"#aaa":"#1a1a2e",fontSize:14}}>{item.name} {item.outOfStock&&<span style={S.outBadge}>Out of stock</span>}</div>
-                  <div style={{color:"#999",fontSize:12}}>{item.desc}</div>
-                  <div style={{color:"#c8102e",fontWeight:800,fontSize:14,marginTop:2}}>RM {item.price.toFixed(2)}</div>
-                </div>
-              </div>
-              <div style={{display:"flex",gap:8,marginTop:12}}>
-                <button style={{...S.ghostBtn,flex:1}} onClick={()=>setEditing(item)}>✏️ Edit</button>
-                <button style={{...S.ghostBtn,flex:1,color:item.outOfStock?"#10b981":"#f59e0b",borderColor:item.outOfStock?"#10b981":"#f59e0b"}} onClick={()=>toggleStock(activeCategory,item.id)}>
-                  {item.outOfStock?"✓ Back in Stock":"⊘ Out of Stock"}
-                </button>
-                <button style={{...S.ghostBtn,color:"#ef4444",borderColor:"#ef4444",padding:"8px 12px"}} onClick={()=>deleteItem(activeCategory,item.id)}>🗑</button>
-              </div>
-            </div>
-          )
-        ))}
-        {adding?(
-          <EditForm catId={activeCategory} isNew onSave={addItem} onCancel={()=>setAdding(false)}/>
-        ):(
-          <button style={{background:"#1a1a2e",color:"white",border:"none",borderRadius:14,padding:"16px",fontSize:15,fontWeight:700,cursor:"pointer"}} onClick={()=>setAdding(true)}>+ Add New Item</button>
-        )}
-      </div>
+      {/* QR TAB */}
+      {tab==="qr"&&(
+        <div style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:24,gap:16}}>
+          <div style={{fontSize:15,fontWeight:700,color:"#1a1a2e"}}>Your Ordering QR Code</div>
+          <div style={{background:"white",padding:16,borderRadius:16,boxShadow:"0 4px 24px rgba(0,0,0,0.1)",border:"3px solid #c8102e"}}>
+            <img src={`https://api.qrserver.com/v1/create-qr-code/?size=240x240&data=${encodeURIComponent(window.location.origin)}`} alt="QR" style={{width:220,height:220,display:"block"}}/>
+          </div>
+          <div style={{fontSize:13,color:"#999",textAlign:"center",maxWidth:260,lineHeight:1.7}}>
+            Print this and stick it on your table.<br/>
+            Students scan → 60 min session → auto expires.
+          </div>
+          <a href="/qr" target="_blank" style={{...S.greenBtn,textDecoration:"none",padding:"14px 32px",fontSize:15}}>🖨️ Open Printable QR Page</a>
+        </div>
+      )}
     </div>
   );
 }
@@ -562,11 +741,7 @@ function EditForm({ item, catId, onSave, onCancel, isNew }) {
       <div style={{marginBottom:12}}>
         <div style={{fontSize:11,fontWeight:600,color:"#999",marginBottom:6}}>Icon</div>
         <button style={{fontSize:32,background:"#f4f1ec",border:"none",borderRadius:10,padding:"8px 14px",cursor:"pointer"}} onClick={()=>setShowEmoji(p=>!p)}>{form.emoji}</button>
-        {showEmoji&&(
-          <div style={{display:"flex",flexWrap:"wrap",gap:6,marginTop:8,background:"#f4f1ec",borderRadius:10,padding:8}}>
-            {EMOJIS.map(e=><button key={e} style={{fontSize:24,background:"none",border:"none",cursor:"pointer",borderRadius:6,padding:4}} onClick={()=>{set("emoji",e);setShowEmoji(false);}}>{e}</button>)}
-          </div>
-        )}
+        {showEmoji&&<div style={{display:"flex",flexWrap:"wrap",gap:6,marginTop:8,background:"#f4f1ec",borderRadius:10,padding:8}}>{EMOJIS.map(e=><button key={e} style={{fontSize:24,background:"none",border:"none",cursor:"pointer",borderRadius:6,padding:4}} onClick={()=>{set("emoji",e);setShowEmoji(false);}}>{e}</button>)}</div>}
       </div>
       <Field label="Item name" value={form.name} onChange={v=>set("name",v)} placeholder="e.g. Roasted Chicken Rice"/>
       <Field label="Description" value={form.desc} onChange={v=>set("desc",v)} placeholder="e.g. Fragrant rice with roasted chicken"/>
@@ -588,7 +763,6 @@ function Field({label,value,onChange,placeholder,type="text"}) {
   );
 }
 
-// ─── SHARED STYLES ────────────────────────────────────────────────────────────
 const S = {
   shell:{minHeight:"100vh",background:"linear-gradient(135deg,#c8102e 0%,#8b0000 100%)",display:"flex",alignItems:"center",justifyContent:"center",fontFamily:"'Segoe UI',sans-serif",padding:"20px"},
   phone:{width:"100%",maxWidth:420,background:"#f9f5f0",borderRadius:32,overflow:"hidden",boxShadow:"0 30px 80px rgba(0,0,0,0.4)",minHeight:700,display:"flex",flexDirection:"column"},
