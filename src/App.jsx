@@ -482,6 +482,32 @@ function StallDashboard({ orders, currentServing, advanceQueue, markDone, hours,
   const done = orders.filter(o => o.status==="done");
   const prevPending = useRef(pending.length);
   const [newOrder, setNewOrder] = useState(false);
+
+useEffect(() => {
+  if (pending.length > prevPending.current) {
+    setNewOrder(true);
+    setTimeout(() => setNewOrder(false), 3000);
+
+    // 🔔 Play alert sound
+    try {
+      const ctx = new (window.AudioContext || window.webkitAudioContext)();
+      [0, 150, 300].forEach(delay => {
+        setTimeout(() => {
+          const osc = ctx.createOscillator();
+          const gain = ctx.createGain();
+          osc.connect(gain);
+          gain.connect(ctx.destination);
+          osc.frequency.value = 880;
+          gain.gain.setValueAtTime(0.3, ctx.currentTime);
+          gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.3);
+          osc.start(ctx.currentTime);
+          osc.stop(ctx.currentTime + 0.3);
+        }, delay);
+      });
+    } catch(e) {}
+  }
+  prevPending.current = pending.length;
+}, [pending.length]);
   const isOpen = hours ? isWithinHours(hours) : false;
 
   useEffect(() => {
