@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from "react";
-import { BrowserRouter, Routes, Route, useNavigate } from "react-router-dom";
+import { BrowserRouter, Routes, Route } from "react-router-dom";
 import { initializeApp } from "firebase/app";
 import { getDatabase, ref, set, get, onValue, push, update } from "firebase/database";
 
@@ -20,7 +20,7 @@ const db = getDatabase(firebaseApp);
 const STALL_PASSWORD = "unclelim123";
 const ADMIN_PASSWORD = "admin888";
 
-// ─── SESSION DURATION (minutes) ──────────────────────────────────────────────
+// ─── SESSION DURATION ────────────────────────────────────────────────────────
 const SESSION_MINUTES = 60;
 
 // ─── DEFAULT MENU ─────────────────────────────────────────────────────────────
@@ -53,10 +53,7 @@ const DEFAULT_MENU = [
 ];
 
 const DEFAULT_HOURS = {
-  open: "07:00",
-  close: "15:00",
-  days: [1,2,3,4,5], // Mon–Fri
-  manualOpen: null, // null = follow schedule, true = force open, false = force closed
+  open: "07:00", close: "15:00", days: [1,2,3,4,5], manualOpen: null,
 };
 
 const EMOJIS = ["🍗","🍚","🍱","🥚","🌶️","🥤","🍵","💧","🍜","🥩","🧆","🫙","🧃","🥗","🍲","🫕","🧋","☕"];
@@ -68,7 +65,7 @@ function isWithinHours(hours) {
   if (hours.manualOpen === true) return true;
   if (hours.manualOpen === false) return false;
   const now = new Date();
-  const day = now.getDay(); // 0=Sun, 1=Mon...
+  const day = now.getDay();
   if (!hours.days.includes(day)) return false;
   const hhmm = now.getHours() * 60 + now.getMinutes();
   const [oh, om] = hours.open.split(":").map(Number);
@@ -80,6 +77,25 @@ function formatTime(secs) {
   const m = Math.floor(secs / 60).toString().padStart(2, "0");
   const s = (secs % 60).toString().padStart(2, "0");
   return `${m}:${s}`;
+}
+
+function playBeep() {
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    [0, 150, 300].forEach(delay => {
+      setTimeout(() => {
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.frequency.value = 880;
+        gain.gain.setValueAtTime(0.3, ctx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.3);
+        osc.start(ctx.currentTime);
+        osc.stop(ctx.currentTime + 0.3);
+      }, delay);
+    });
+  } catch(e) {}
 }
 
 // ─── FIREBASE HELPERS ─────────────────────────────────────────────────────────
@@ -104,7 +120,6 @@ function useFirebaseState() {
       else { setMenu(DEFAULT_MENU); fbSet("menu", DEFAULT_MENU); }
     });
     fbGet("hours", DEFAULT_HOURS).then(h => setHours(h));
-
     const unsubQ = onValue(ref(db, "currentServing"), s => { if (s.exists()) setCurrentServing(s.val()); });
     const unsubO = onValue(ref(db, "orders"), s => {
       if (s.exists()) {
@@ -114,7 +129,6 @@ function useFirebaseState() {
       } else setOrders([]);
     });
     const unsubH = onValue(ref(db, "hours"), s => { if (s.exists()) setHours(s.val()); });
-
     return () => { unsubQ(); unsubO(); unsubH(); };
   }, []);
 
@@ -173,8 +187,21 @@ export default function App() {
     <BrowserRouter>
       <Routes>
         <Route path="/" element={<OrderGate state={state} />} />
-        <Route path="/stall" element={<PasswordGate correctPassword={STALL_PASSWORD} label="Stall Dashboard" icon="🧑‍🍳"><StallDashboard {...state} /></PasswordGate>} />
-        <Route path="/admin" element={<PasswordGate correctPassword={ADMIN_PASSWORD} label="Admin Panel" icon="⚙️"><AdminPanel menu={state.menu} hours={state.hours} onUpdateMenu={state.updateMenu} onUpdateHours={state.updateHours} /></PasswordGate>} />
+        <Route path="/stall" element={
+          <PasswordGate correctPassword={STALL_PASSWORD} label="Stall Dashboard" icon="🧑‍🍳">
+            <StallDashboard {...state} />
+          </PasswordGate>
+        } />
+        <Route path="/admin" element={
+          <PasswordGate correctPassword={ADMIN_PASSWORD} label="Admin Panel" icon="⚙️">
+            <AdminPanel menu={state.menu} hours={state.hours} onUpdateMenu={state.updateMenu} onUpdateHours={state.updateHours} />
+          </PasswordGate>
+        } />
+        <Route path="/report" element={
+          <PasswordGate correctPassword={STALL_PASSWORD} label="Sales Report" icon="📊">
+            <SalesReport orders={state.orders} />
+          </PasswordGate>
+        } />
         <Route path="/qr" element={<QRPage />} />
         <Route path="*" element={<NotFound />} />
       </Routes>
@@ -182,81 +209,7 @@ export default function App() {
   );
 }
 
-// ─── ORDER GATE (checks hours + starts session timer) ────────────────────────
-function OrderGate({ state }) {
-  const { hours, menu, currentServing, addOrder } = state;
-  const [sessionState, setSessionState] = useState("checking"); // checking | open | closed | expired
-  const [secondsLeft, setSecondsLeft] = useState(SESSION_MINUTES * 60);
-
-  useEffect(() => {
-    if (!hours) return;
-    if (isWithinHours(hours)) {
-      setSessionState("open");
-      setSecondsLeft(SESSION_MINUTES * 60);
-    } else {
-      setSessionState("closed");
-    }
-  }, [hours]);
-
-  // Session countdown
-  useEffect(() => {
-    if (sessionState !== "open") return;
-    const t = setInterval(() => {
-      setSecondsLeft(prev => {
-        if (prev <= 1) { clearInterval(t); setSessionState("expired"); return 0; }
-        return prev - 1;
-      });
-    }, 1000);
-    return () => clearInterval(t);
-  }, [sessionState]);
-
-  if (sessionState === "checking") return <LoadingScreen />;
-  if (sessionState === "closed") return <ClosedScreen hours={hours} />;
-  if (sessionState === "expired") return <ExpiredScreen />;
-
-  return <OrderFlow menu={menu} currentServing={currentServing} addOrder={addOrder} secondsLeft={secondsLeft} />;
-}
-
-// ─── CLOSED SCREEN ────────────────────────────────────────────────────────────
-function ClosedScreen({ hours }) {
-  const dayNames = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
-  const days = hours.days.map(d => dayNames[d]).join(", ");
-  return (
-    <div style={{ minHeight:"100vh", background:"linear-gradient(135deg,#1a1a2e,#16213e)", display:"flex", alignItems:"center", justifyContent:"center", fontFamily:"'Segoe UI',sans-serif", padding:20 }}>
-      <div style={{ textAlign:"center", maxWidth:340 }}>
-        <div style={{ fontSize:80, marginBottom:16 }}>🔒</div>
-        <div style={{ color:"white", fontSize:26, fontWeight:900, marginBottom:8 }}>Canteen Closed</div>
-        <div style={{ color:"#666", fontSize:15, lineHeight:1.7, marginBottom:24 }}>
-          Uncle Lim's is currently closed.<br/>Come back during operating hours!
-        </div>
-        <div style={{ background:"#1e2130", borderRadius:16, padding:"20px 24px", border:"1px solid #2a2d3e" }}>
-          <div style={{ color:"#f59e0b", fontWeight:700, fontSize:13, marginBottom:12, textTransform:"uppercase", letterSpacing:"1px" }}>Operating Hours</div>
-          <div style={{ color:"white", fontSize:18, fontWeight:800 }}>{hours.open} – {hours.close}</div>
-          <div style={{ color:"#666", fontSize:13, marginTop:6 }}>{days}</div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// ─── EXPIRED SCREEN ───────────────────────────────────────────────────────────
-function ExpiredScreen() {
-  return (
-    <div style={{ minHeight:"100vh", background:"linear-gradient(135deg,#1a1a2e,#16213e)", display:"flex", alignItems:"center", justifyContent:"center", fontFamily:"'Segoe UI',sans-serif", padding:20 }}>
-      <div style={{ textAlign:"center", maxWidth:320 }}>
-        <div style={{ fontSize:80, marginBottom:16 }}>⏰</div>
-        <div style={{ color:"white", fontSize:26, fontWeight:900, marginBottom:8 }}>Session Expired</div>
-        <div style={{ color:"#666", fontSize:15, lineHeight:1.7, marginBottom:28 }}>
-          Your 60-minute ordering session has ended.<br/>Please scan the QR code again to order.
-        </div>
-        <div style={{ background:"#1e2130", borderRadius:16, padding:"16px 20px", border:"1px solid #c8102e44" }}>
-          <div style={{ color:"#c8102e", fontSize:13, fontWeight:700 }}>📱 Scan the QR code at the stall to start a new session</div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
+// ─── LOADING ──────────────────────────────────────────────────────────────────
 function LoadingScreen() {
   return (
     <div style={{ minHeight:"100vh", background:"linear-gradient(135deg,#c8102e,#8b0000)", display:"flex", alignItems:"center", justifyContent:"center", flexDirection:"column", gap:16, fontFamily:"'Segoe UI',sans-serif" }}>
@@ -280,9 +233,7 @@ function NotFound() {
 // ─── QR PAGE ──────────────────────────────────────────────────────────────────
 function QRPage() {
   const url = window.location.origin;
-  // Generate a simple QR using a public API
   const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(url)}`;
-
   return (
     <div style={{ minHeight:"100vh", background:"white", display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", fontFamily:"'Segoe UI',sans-serif", padding:40, gap:24 }}>
       <div style={{ fontSize:48 }}>🍗</div>
@@ -295,13 +246,74 @@ function QRPage() {
         Point your phone camera at this QR code to start ordering.<br/>
         <strong style={{ color:"#c8102e" }}>Session expires after 60 minutes.</strong>
       </div>
-      <div style={{ background:"#f4f1ec", borderRadius:12, padding:"10px 20px", fontSize:13, color:"#666" }}>
-        {url}
-      </div>
-      <button onClick={() => window.print()} style={{ background:"#1a1a2e", color:"white", border:"none", borderRadius:12, padding:"14px 32px", fontSize:15, fontWeight:700, cursor:"pointer", marginTop:8 }}>
-        🖨️ Print this QR
-      </button>
+      <div style={{ background:"#f4f1ec", borderRadius:12, padding:"10px 20px", fontSize:13, color:"#666" }}>{url}</div>
+      <button onClick={() => window.print()} style={{ background:"#1a1a2e", color:"white", border:"none", borderRadius:12, padding:"14px 32px", fontSize:15, fontWeight:700, cursor:"pointer" }}>🖨️ Print this QR</button>
       <style>{`@media print { button { display:none; } }`}</style>
+    </div>
+  );
+}
+
+// ─── ORDER GATE ───────────────────────────────────────────────────────────────
+function OrderGate({ state }) {
+  const { hours, menu, currentServing, addOrder } = state;
+  const [sessionState, setSessionState] = useState("checking");
+  const [secondsLeft, setSecondsLeft] = useState(SESSION_MINUTES * 60);
+
+  useEffect(() => {
+    if (!hours) return;
+    if (isWithinHours(hours)) { setSessionState("open"); setSecondsLeft(SESSION_MINUTES * 60); }
+    else setSessionState("closed");
+  }, [hours]);
+
+  useEffect(() => {
+    if (sessionState !== "open") return;
+    const t = setInterval(() => {
+      setSecondsLeft(prev => {
+        if (prev <= 1) { clearInterval(t); setSessionState("expired"); return 0; }
+        return prev - 1;
+      });
+    }, 1000);
+    return () => clearInterval(t);
+  }, [sessionState]);
+
+  if (sessionState === "checking") return <LoadingScreen />;
+  if (sessionState === "closed") return <ClosedScreen hours={hours} />;
+  if (sessionState === "expired") return <ExpiredScreen />;
+  return <OrderFlow menu={menu} currentServing={currentServing} addOrder={addOrder} secondsLeft={secondsLeft} />;
+}
+
+// ─── CLOSED SCREEN ────────────────────────────────────────────────────────────
+function ClosedScreen({ hours }) {
+  const dayNames = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
+  const days = hours.days.map(d => dayNames[d]).join(", ");
+  return (
+    <div style={{ minHeight:"100vh", background:"linear-gradient(135deg,#1a1a2e,#16213e)", display:"flex", alignItems:"center", justifyContent:"center", fontFamily:"'Segoe UI',sans-serif", padding:20 }}>
+      <div style={{ textAlign:"center", maxWidth:340 }}>
+        <div style={{ fontSize:80, marginBottom:16 }}>🔒</div>
+        <div style={{ color:"white", fontSize:26, fontWeight:900, marginBottom:8 }}>Canteen Closed</div>
+        <div style={{ color:"#666", fontSize:15, lineHeight:1.7, marginBottom:24 }}>Uncle Lim's is currently closed.<br/>Come back during operating hours!</div>
+        <div style={{ background:"#1e2130", borderRadius:16, padding:"20px 24px", border:"1px solid #2a2d3e" }}>
+          <div style={{ color:"#f59e0b", fontWeight:700, fontSize:13, marginBottom:12, textTransform:"uppercase", letterSpacing:"1px" }}>Operating Hours</div>
+          <div style={{ color:"white", fontSize:18, fontWeight:800 }}>{hours.open} – {hours.close}</div>
+          <div style={{ color:"#666", fontSize:13, marginTop:6 }}>{days}</div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── EXPIRED SCREEN ───────────────────────────────────────────────────────────
+function ExpiredScreen() {
+  return (
+    <div style={{ minHeight:"100vh", background:"linear-gradient(135deg,#1a1a2e,#16213e)", display:"flex", alignItems:"center", justifyContent:"center", fontFamily:"'Segoe UI',sans-serif", padding:20 }}>
+      <div style={{ textAlign:"center", maxWidth:320 }}>
+        <div style={{ fontSize:80, marginBottom:16 }}>⏰</div>
+        <div style={{ color:"white", fontSize:26, fontWeight:900, marginBottom:8 }}>Session Expired</div>
+        <div style={{ color:"#666", fontSize:15, lineHeight:1.7, marginBottom:28 }}>Your 60-minute ordering session has ended.<br/>Please scan the QR code again to order.</div>
+        <div style={{ background:"#1e2130", borderRadius:16, padding:"16px 20px", border:"1px solid #c8102e44" }}>
+          <div style={{ color:"#c8102e", fontSize:13, fontWeight:700 }}>📱 Scan the QR code at the stall to start a new session</div>
+        </div>
+      </div>
     </div>
   );
 }
@@ -319,7 +331,7 @@ function OrderFlow({ menu, currentServing, addOrder, secondsLeft }) {
   const cartItems = Object.values(cart).filter(i => i.qty > 0);
   const total = cartItems.reduce((s, i) => s + i.price * i.qty, 0);
   const totalQty = cartItems.reduce((s, i) => s + i.qty, 0);
-  const isLow = secondsLeft <= 300; // under 5 min = red
+  const isLow = secondsLeft <= 300;
 
   function add(item) { setCart(p => ({ ...p, [item.id]: { ...item, qty: (p[item.id]?.qty||0)+1 } })); }
   function remove(id) {
@@ -352,44 +364,32 @@ function OrderFlow({ menu, currentServing, addOrder, secondsLeft }) {
   return (
     <div style={S.shell}>
       <div style={S.phone}>
-        {/* Session Timer Banner */}
-        <div style={{ background: isLow ? "#ef4444" : "#1a1a2e", padding:"8px 16px", display:"flex", justifyContent:"space-between", alignItems:"center" }}>
-          <span style={{ color: isLow ? "white" : "#666", fontSize:12, fontWeight:600 }}>
-            {isLow ? "⚠️ Session ending soon!" : "⏱ Session"}
-          </span>
-          <span style={{ color: isLow ? "white" : "#f59e0b", fontSize:14, fontWeight:800, fontFamily:"monospace" }}>
-            {formatTime(secondsLeft)}
-          </span>
+        <div style={{ background:isLow?"#ef4444":"#1a1a2e", padding:"8px 16px", display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+          <span style={{ color:isLow?"white":"#666", fontSize:12, fontWeight:600 }}>{isLow?"⚠️ Session ending soon!":"⏱ Session"}</span>
+          <span style={{ color:isLow?"white":"#f59e0b", fontSize:14, fontWeight:800, fontFamily:"monospace" }}>{formatTime(secondsLeft)}</span>
         </div>
 
-        {screen === "menu" && <>
+        {screen==="menu"&&<>
           <div style={S.header}>
-            <div style={{ flex:1 }}>
-              <div style={S.stallName}>Uncle Lim's 🍗</div>
-              <div style={S.stallSub}>Block A Canteen · Self Order</div>
-            </div>
-            <div style={{ background:"rgba(255,255,255,0.2)", borderRadius:20, padding:"4px 12px", fontSize:11, fontWeight:700, color:"white" }}>🟢 Open</div>
+            <div style={{flex:1}}><div style={S.stallName}>Uncle Lim's 🍗</div><div style={S.stallSub}>Block A Canteen · Self Order</div></div>
+            <div style={{background:"rgba(255,255,255,0.2)",borderRadius:20,padding:"4px 12px",fontSize:11,fontWeight:700,color:"white"}}>🟢 Open</div>
           </div>
-          <div style={S.tabs}>
-            {menu.map(g => <button key={g.id} style={{...S.tab,...(activeCategory===g.id?S.tabActive:{})}} onClick={()=>setActiveCategory(g.id)}>{g.category}</button>)}
-          </div>
+          <div style={S.tabs}>{menu.map(g=><button key={g.id} style={{...S.tab,...(activeCategory===g.id?S.tabActive:{})}} onClick={()=>setActiveCategory(g.id)}>{g.category}</button>)}</div>
           <div style={S.itemList}>
-            {activeGroup?.items.map(item => {
-              const qty = cart[item.id]?.qty||0;
+            {activeGroup?.items.map(item=>{
+              const qty=cart[item.id]?.qty||0;
               return (
-                <div key={item.id} style={{...S.itemCard, opacity:item.outOfStock?0.5:1}}>
+                <div key={item.id} style={{...S.itemCard,opacity:item.outOfStock?0.5:1}}>
                   <div style={{fontSize:34,minWidth:44,textAlign:"center"}}>{item.emoji}</div>
                   <div style={{flex:1}}>
                     <div style={S.itemName}>{item.name} {item.outOfStock&&<span style={S.outBadge}>Out of stock</span>}</div>
                     <div style={S.itemDesc}>{item.desc}</div>
                     <div style={S.itemPrice}>RM {item.price.toFixed(2)}</div>
                   </div>
-                  {!item.outOfStock&&(
-                    <div style={S.qtyCtrl}>
-                      {qty>0&&<><button style={S.qtyBtn} onClick={()=>remove(item.id)}>−</button><span style={S.qtyNum}>{qty}</span></>}
-                      <button style={S.addBtn} onClick={()=>add(item)}>+</button>
-                    </div>
-                  )}
+                  {!item.outOfStock&&<div style={S.qtyCtrl}>
+                    {qty>0&&<><button style={S.qtyBtn} onClick={()=>remove(item.id)}>−</button><span style={S.qtyNum}>{qty}</span></>}
+                    <button style={S.addBtn} onClick={()=>add(item)}>+</button>
+                  </div>}
                 </div>
               );
             })}
@@ -400,10 +400,7 @@ function OrderFlow({ menu, currentServing, addOrder, secondsLeft }) {
         </>}
 
         {screen==="cart"&&<>
-          <div style={S.header}>
-            <button style={S.backBtn} onClick={()=>setScreen("menu")}>←</button>
-            <div style={S.headerTitle}>Your Order</div>
-          </div>
+          <div style={S.header}><button style={S.backBtn} onClick={()=>setScreen("menu")}>←</button><div style={S.headerTitle}>Your Order</div></div>
           <div style={S.itemList}>
             {cartItems.map(item=>(
               <div key={item.id} style={S.cartRow}>
@@ -469,9 +466,7 @@ function FakeQR() {
     <svg width="160" height="160" viewBox="0 0 160 160">
       <rect width="160" height="160" fill="white"/>
       {[...Array(10)].map((_,r)=>[...Array(10)].map((_,c)=>{ const dark=(r+c+r*c)%3!==0; return dark?<rect key={`${r}-${c}`} x={10+c*14} y={10+r*14} width={12} height={12} fill="#1a1a2e" rx={1}/>:null; }))}
-      {[[10,10],[108,10],[10,108]].map(([x,y],i)=>(
-        <g key={i}><rect x={x} y={y} width={42} height={42} fill="#1a1a2e" rx={4}/><rect x={x+6} y={y+6} width={30} height={30} fill="white" rx={2}/><rect x={x+12} y={y+12} width={18} height={18} fill="#1a1a2e" rx={2}/></g>
-      ))}
+      {[[10,10],[108,10],[10,108]].map(([x,y],i)=>(<g key={i}><rect x={x} y={y} width={42} height={42} fill="#1a1a2e" rx={4}/><rect x={x+6} y={y+6} width={30} height={30} fill="white" rx={2}/><rect x={x+12} y={y+12} width={18} height={18} fill="#1a1a2e" rx={2}/></g>))}
     </svg>
   );
 }
@@ -482,46 +477,16 @@ function StallDashboard({ orders, currentServing, advanceQueue, markDone, hours,
   const done = orders.filter(o => o.status==="done");
   const prevPending = useRef(pending.length);
   const [newOrder, setNewOrder] = useState(false);
-
-useEffect(() => {
-  if (pending.length > prevPending.current) {
-    setNewOrder(true);
-    setTimeout(() => setNewOrder(false), 3000);
-
-    // 🔔 Play alert sound
-    try {
-      const ctx = new (window.AudioContext || window.webkitAudioContext)();
-      [0, 150, 300].forEach(delay => {
-        setTimeout(() => {
-          const osc = ctx.createOscillator();
-          const gain = ctx.createGain();
-          osc.connect(gain);
-          gain.connect(ctx.destination);
-          osc.frequency.value = 880;
-          gain.gain.setValueAtTime(0.3, ctx.currentTime);
-          gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.3);
-          osc.start(ctx.currentTime);
-          osc.stop(ctx.currentTime + 0.3);
-        }, delay);
-      });
-    } catch(e) {}
-  }
-  prevPending.current = pending.length;
-}, [pending.length]);
   const isOpen = hours ? isWithinHours(hours) : false;
 
   useEffect(() => {
-    if (pending.length > prevPending.current) { setNewOrder(true); setTimeout(()=>setNewOrder(false),3000); }
+    if (pending.length > prevPending.current) {
+      setNewOrder(true);
+      setTimeout(() => setNewOrder(false), 3000);
+      playBeep();
+    }
     prevPending.current = pending.length;
   }, [pending.length]);
-
-  function toggleManual() {
-    const h = { ...hours };
-    if (h.manualOpen === true) h.manualOpen = null;
-    else if (h.manualOpen === false) h.manualOpen = null;
-    else h.manualOpen = !isOpen;
-    updateHours(h);
-  }
 
   return (
     <div style={{minHeight:"100vh",background:"#0f1117",fontFamily:"'Segoe UI',sans-serif",display:"flex",flexDirection:"column"}}>
@@ -532,17 +497,17 @@ useEffect(() => {
         <div style={{flex:1}}>
           <div style={{color:"white",fontSize:20,fontWeight:900}}>🧑‍🍳 Stall Dashboard</div>
           <div style={{color:"#aaa",fontSize:12,display:"flex",alignItems:"center",gap:6}}>
-            <div style={{width:6,height:6,borderRadius:"50%",background: isOpen?"#10b981":"#ef4444"}}></div>
-            {isOpen ? "Open · Accepting orders" : "Closed · Not accepting orders"}
+            <div style={{width:6,height:6,borderRadius:"50%",background:isOpen?"#10b981":"#ef4444"}}></div>
+            {isOpen?"Open · Accepting orders":"Closed · Not accepting orders"}
           </div>
         </div>
+        <a href="/report" style={{background:"rgba(255,255,255,0.1)",color:"white",borderRadius:8,padding:"8px 14px",fontSize:13,fontWeight:600,textDecoration:"none"}}>📊 Report</a>
         <div style={{textAlign:"right"}}>
           <div style={{color:"#aaa",fontSize:11,fontWeight:600}}>NOW SERVING</div>
           <div style={{color:"#c8102e",fontSize:32,fontWeight:900,lineHeight:1}}>#{currentServing}</div>
         </div>
       </div>
 
-      {/* Manual open/close toggle */}
       <div style={{padding:"12px 14px",background:"#16181f",borderBottom:"1px solid #1e2130"}}>
         <div style={{display:"flex",alignItems:"center",justifyContent:"space-between"}}>
           <div>
@@ -550,13 +515,13 @@ useEffect(() => {
             <div style={{color:"#555",fontSize:12}}>{hours?.manualOpen===null||hours?.manualOpen===undefined?"Following schedule":"Override active"}</div>
           </div>
           <div style={{display:"flex",gap:8}}>
-            <button style={{background: isOpen&&hours?.manualOpen!==true?"#1e2130":"#10b981", color:"white", border:"none", borderRadius:10, padding:"8px 16px", fontSize:13, fontWeight:700, cursor:"pointer"}}
-              onClick={() => updateHours({...hours, manualOpen: true})}>Force Open</button>
-            <button style={{background: !isOpen&&hours?.manualOpen!==false?"#1e2130":"#ef4444", color:"white", border:"none", borderRadius:10, padding:"8px 16px", fontSize:13, fontWeight:700, cursor:"pointer"}}
-              onClick={() => updateHours({...hours, manualOpen: false})}>Force Close</button>
+            <button style={{background:hours?.manualOpen===true?"#10b981":"#1e2130",color:"white",border:"none",borderRadius:10,padding:"8px 16px",fontSize:13,fontWeight:700,cursor:"pointer"}}
+              onClick={()=>updateHours({...hours,manualOpen:true})}>Force Open</button>
+            <button style={{background:hours?.manualOpen===false?"#ef4444":"#1e2130",color:"white",border:"none",borderRadius:10,padding:"8px 16px",fontSize:13,fontWeight:700,cursor:"pointer"}}
+              onClick={()=>updateHours({...hours,manualOpen:false})}>Force Close</button>
             {hours?.manualOpen!==null&&hours?.manualOpen!==undefined&&(
               <button style={{background:"#2a2d3e",color:"#aaa",border:"none",borderRadius:10,padding:"8px 12px",fontSize:12,fontWeight:600,cursor:"pointer"}}
-                onClick={() => updateHours({...hours, manualOpen: null})}>Auto</button>
+                onClick={()=>updateHours({...hours,manualOpen:null})}>Auto</button>
             )}
           </div>
         </div>
@@ -615,9 +580,131 @@ useEffect(() => {
   );
 }
 
+// ─── SALES REPORT ─────────────────────────────────────────────────────────────
+function SalesReport({ orders }) {
+  const [period, setPeriod] = useState("today");
+
+  function startOf(p) {
+    const d = new Date();
+    if (p==="today") { d.setHours(0,0,0,0); return d.getTime(); }
+    if (p==="week")  { d.setDate(d.getDate()-7); d.setHours(0,0,0,0); return d.getTime(); }
+    return 0;
+  }
+
+  const filtered = orders.filter(o => o.status==="done" && o.timestamp>=startOf(period));
+  const revenue = filtered.reduce((s,o)=>s+o.total,0);
+  const orderCount = filtered.length;
+  const avgOrder = orderCount>0 ? revenue/orderCount : 0;
+
+  const itemMap = {};
+  filtered.forEach(o => {
+    o.items?.forEach(item => {
+      if (!itemMap[item.name]) itemMap[item.name]={name:item.name,emoji:item.emoji,qty:0,revenue:0};
+      itemMap[item.name].qty+=item.qty;
+      itemMap[item.name].revenue+=item.price*item.qty;
+    });
+  });
+  const topItems = Object.values(itemMap).sort((a,b)=>b.qty-a.qty).slice(0,5);
+  const maxCount = Math.max(...topItems.map(i=>i.qty),1);
+
+  const byHour = Array(24).fill(0);
+  filtered.forEach(o=>{ const h=new Date(o.timestamp).getHours(); byHour[h]++; });
+  const peakHour = byHour.indexOf(Math.max(...byHour));
+  const maxHour = Math.max(...byHour,1);
+  const periodLabel = period==="today"?"Today":period==="week"?"Last 7 Days":"All Time";
+
+  return (
+    <div style={{minHeight:"100vh",background:"#0f1117",fontFamily:"'Segoe UI',sans-serif",display:"flex",flexDirection:"column"}}>
+      <div style={{background:"#1a1a2e",padding:"16px 20px",display:"flex",alignItems:"center",gap:12,borderBottom:"3px solid #c8102e"}}>
+        <div style={{flex:1}}><div style={{color:"white",fontSize:20,fontWeight:900}}>📊 Sales Report</div><div style={{color:"#aaa",fontSize:12}}>Uncle Lim's Chicken Rice</div></div>
+        <a href="/stall" style={{background:"rgba(255,255,255,0.1)",color:"white",borderRadius:8,padding:"8px 14px",fontSize:13,fontWeight:600,textDecoration:"none"}}>← Dashboard</a>
+      </div>
+
+      <div style={{display:"flex",background:"#16181f",padding:"12px 16px",gap:8,borderBottom:"1px solid #1e2130"}}>
+        {[["today","Today"],["week","7 Days"],["all","All Time"]].map(([val,label])=>(
+          <button key={val} onClick={()=>setPeriod(val)} style={{flex:1,padding:"10px",border:"none",borderRadius:10,fontSize:13,fontWeight:700,cursor:"pointer",background:period===val?"#c8102e":"#1e2130",color:period===val?"white":"#666"}}>{label}</button>
+        ))}
+      </div>
+
+      <div style={{flex:1,overflowY:"auto",padding:"16px",display:"flex",flexDirection:"column",gap:14}}>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:10}}>
+          {[
+            {label:"Revenue",value:`RM ${revenue.toFixed(2)}`,color:"#10b981",bg:"#0a2a1a",icon:"💰"},
+            {label:"Orders",value:orderCount,color:"#3b82f6",bg:"#0a1a3a",icon:"🧾"},
+            {label:"Avg Order",value:`RM ${avgOrder.toFixed(2)}`,color:"#f59e0b",bg:"#2a2200",icon:"📈"},
+          ].map(s=>(
+            <div key={s.label} style={{background:s.bg,borderRadius:14,padding:"14px 10px",textAlign:"center",border:`1px solid ${s.color}33`}}>
+              <div style={{fontSize:20,marginBottom:4}}>{s.icon}</div>
+              <div style={{color:s.color,fontSize:s.label==="Orders"?22:13,fontWeight:900,lineHeight:1.2}}>{s.value}</div>
+              <div style={{color:"#555",fontSize:11,fontWeight:600,marginTop:4}}>{s.label}</div>
+            </div>
+          ))}
+        </div>
+
+        <div style={{background:"#1e2130",borderRadius:16,padding:"18px",border:"1px solid #2a2d3e"}}>
+          <div style={{color:"white",fontWeight:800,fontSize:15,marginBottom:16}}>🏆 Top Selling Items — {periodLabel}</div>
+          {topItems.length===0?(
+            <div style={{color:"#444",textAlign:"center",padding:"20px 0"}}>No sales data yet</div>
+          ):topItems.map((item,i)=>(
+            <div key={item.name} style={{marginBottom:14}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
+                <div style={{display:"flex",alignItems:"center",gap:8}}>
+                  <div style={{color:"#f59e0b",fontWeight:900,fontSize:13,minWidth:20}}>#{i+1}</div>
+                  <div style={{fontSize:18}}>{item.emoji}</div>
+                  <div style={{color:"white",fontSize:13,fontWeight:600}}>{item.name}</div>
+                </div>
+                <div style={{textAlign:"right"}}>
+                  <div style={{color:"#10b981",fontSize:13,fontWeight:700}}>×{item.qty}</div>
+                  <div style={{color:"#555",fontSize:11}}>RM {item.revenue.toFixed(2)}</div>
+                </div>
+              </div>
+              <div style={{background:"#2a2d3e",borderRadius:8,height:8,overflow:"hidden"}}>
+                <div style={{background:"linear-gradient(90deg,#c8102e,#f59e0b)",height:"100%",borderRadius:8,width:`${(item.qty/maxCount)*100}%`}}/>
+              </div>
+            </div>
+          ))}
+        </div>
+
+        <div style={{background:"#1e2130",borderRadius:16,padding:"18px",border:"1px solid #2a2d3e"}}>
+          <div style={{color:"white",fontWeight:800,fontSize:15,marginBottom:4}}>⏰ Busiest Hours — {periodLabel}</div>
+          {byHour.every(h=>h===0)?(
+            <div style={{color:"#444",textAlign:"center",padding:"20px 0"}}>No data yet</div>
+          ):<>
+            <div style={{color:"#aaa",fontSize:12,marginBottom:16}}>Peak hour: <span style={{color:"#f59e0b",fontWeight:700}}>{peakHour}:00–{peakHour+1}:00</span> ({byHour[peakHour]} orders)</div>
+            <div style={{display:"flex",alignItems:"flex-end",gap:3,height:80}}>
+              {Array(24).fill(0).map((_,h)=>(
+                <div key={h} style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",gap:2}}>
+                  <div style={{width:"100%",background:h===peakHour?"#f59e0b":"#c8102e",borderRadius:"3px 3px 0 0",height:`${(byHour[h]/maxHour)*64}px`,minHeight:byHour[h]>0?4:0}}/>
+                  <div style={{color:byHour[h]>0?"#555":"#222",fontSize:8,fontWeight:600}}>{h}</div>
+                </div>
+              ))}
+            </div>
+          </>}
+        </div>
+
+        <div style={{background:"#1e2130",borderRadius:16,padding:"18px",border:"1px solid #2a2d3e"}}>
+          <div style={{color:"white",fontWeight:800,fontSize:15,marginBottom:14}}>🧾 Recent Orders — {periodLabel}</div>
+          {filtered.length===0?(
+            <div style={{color:"#444",textAlign:"center",padding:"20px 0"}}>No completed orders yet</div>
+          ):[...filtered].reverse().slice(0,20).map(order=>(
+            <div key={order.fbKey} style={{borderBottom:"1px solid #2a2d3e",paddingBottom:12,marginBottom:12}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:4}}>
+                <div style={{color:"#f59e0b",fontWeight:700,fontSize:14}}>#{order.queueNum}</div>
+                <div style={{color:"#10b981",fontWeight:700,fontSize:14}}>RM {order.total.toFixed(2)}</div>
+              </div>
+              <div style={{color:"#666",fontSize:12}}>{order.items?.map(i=>`${i.emoji}${i.name} ×${i.qty}`).join(", ")}</div>
+              <div style={{color:"#444",fontSize:11,marginTop:3}}>{order.time} · {new Date(order.timestamp).toLocaleDateString("en-MY")}</div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── ADMIN PANEL ──────────────────────────────────────────────────────────────
 function AdminPanel({ menu, hours, onUpdateMenu, onUpdateHours }) {
-  const [tab, setTab] = useState("menu"); // menu | hours
+  const [tab, setTab] = useState("menu");
   const [activeCategory, setActiveCategory] = useState(menu[0]?.id);
   const [editing, setEditing] = useState(null);
   const [adding, setAdding] = useState(false);
@@ -625,9 +712,9 @@ function AdminPanel({ menu, hours, onUpdateMenu, onUpdateHours }) {
   const [addingCat, setAddingCat] = useState(false);
   const [saved, setSaved] = useState(false);
   const [localHours, setLocalHours] = useState(hours);
-
   const DAY_NAMES = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
   const activeGroup = menu.find(g=>g.id===activeCategory);
+
   function showSaved() { setSaved(true); setTimeout(()=>setSaved(false),2000); }
   function toggleStock(catId,itemId) { onUpdateMenu(menu.map(g=>g.id===catId?{...g,items:g.items.map(i=>i.id===itemId?{...i,outOfStock:!i.outOfStock}:i)}:g)); showSaved(); }
   function deleteItem(catId,itemId) { onUpdateMenu(menu.map(g=>g.id===catId?{...g,items:g.items.filter(i=>i.id!==itemId)}:g)); showSaved(); }
@@ -636,7 +723,7 @@ function AdminPanel({ menu, hours, onUpdateMenu, onUpdateHours }) {
   function addCategory() { if(!newCatName.trim()) return; onUpdateMenu([...menu,{id:genId(),category:newCatName.trim(),items:[]}]); setNewCatName(""); setAddingCat(false); showSaved(); }
   function deleteCategory(catId) { if(menu.length<=1) return; const u=menu.filter(g=>g.id!==catId); onUpdateMenu(u); setActiveCategory(u[0].id); showSaved(); }
   function saveHours() { onUpdateHours(localHours); showSaved(); }
-  function toggleDay(d) { const days = localHours.days.includes(d) ? localHours.days.filter(x=>x!==d) : [...localHours.days,d]; setLocalHours({...localHours,days}); }
+  function toggleDay(d) { const days=localHours.days.includes(d)?localHours.days.filter(x=>x!==d):[...localHours.days,d]; setLocalHours({...localHours,days}); }
 
   return (
     <div style={{minHeight:"100vh",background:"#f4f1ec",fontFamily:"'Segoe UI',sans-serif",display:"flex",flexDirection:"column"}}>
@@ -646,14 +733,12 @@ function AdminPanel({ menu, hours, onUpdateMenu, onUpdateHours }) {
         <a href="/" style={{background:"rgba(255,255,255,0.1)",color:"white",borderRadius:8,padding:"8px 14px",fontSize:13,fontWeight:600,textDecoration:"none"}}>← Exit</a>
       </div>
 
-      {/* Admin tabs */}
       <div style={{background:"white",borderBottom:"2px solid #e8e0d5",display:"flex"}}>
-        <button style={{flex:1,padding:"14px",border:"none",background:"none",fontSize:14,fontWeight:700,cursor:"pointer",borderBottom:tab==="menu"?"3px solid #1a1a2e":"3px solid transparent",color:tab==="menu"?"#1a1a2e":"#999"}} onClick={()=>setTab("menu")}>🍗 Menu</button>
-        <button style={{flex:1,padding:"14px",border:"none",background:"none",fontSize:14,fontWeight:700,cursor:"pointer",borderBottom:tab==="hours"?"3px solid #1a1a2e":"3px solid transparent",color:tab==="hours"?"#1a1a2e":"#999"}} onClick={()=>setTab("hours")}>🕐 Hours</button>
-        <button style={{flex:1,padding:"14px",border:"none",background:"none",fontSize:14,fontWeight:700,cursor:"pointer",borderBottom:tab==="qr"?"3px solid #1a1a2e":"3px solid transparent",color:tab==="qr"?"#1a1a2e":"#999"}} onClick={()=>setTab("qr")}>📱 QR</button>
+        {[["menu","🍗 Menu"],["hours","🕐 Hours"],["qr","📱 QR"]].map(([val,label])=>(
+          <button key={val} style={{flex:1,padding:"14px",border:"none",background:"none",fontSize:14,fontWeight:700,cursor:"pointer",borderBottom:tab===val?"3px solid #1a1a2e":"3px solid transparent",color:tab===val?"#1a1a2e":"#999"}} onClick={()=>setTab(val)}>{label}</button>
+        ))}
       </div>
 
-      {/* MENU TAB */}
       {tab==="menu"&&<>
         <div style={{background:"white",borderBottom:"2px solid #e8e0d5",padding:"0 12px",display:"flex",alignItems:"center",overflowX:"auto",gap:4}}>
           {menu.map(g=><button key={g.id} style={{...S.tab,...(activeCategory===g.id?{...S.tabActive,color:"#1a1a2e",borderColor:"#1a1a2e"}:{})}} onClick={()=>setActiveCategory(g.id)}>{g.category}</button>)}
@@ -694,7 +779,6 @@ function AdminPanel({ menu, hours, onUpdateMenu, onUpdateHours }) {
         </div>
       </>}
 
-      {/* HOURS TAB */}
       {tab==="hours"&&(
         <div style={{flex:1,overflowY:"auto",padding:"16px",display:"flex",flexDirection:"column",gap:16}}>
           <div style={{background:"white",borderRadius:16,padding:"20px",boxShadow:"0 2px 8px rgba(0,0,0,0.06)"}}>
@@ -702,53 +786,40 @@ function AdminPanel({ menu, hours, onUpdateMenu, onUpdateHours }) {
             <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:16}}>
               <div>
                 <div style={{fontSize:11,fontWeight:600,color:"#999",marginBottom:6}}>Opening Time</div>
-                <input type="time" value={localHours.open} onChange={e=>setLocalHours({...localHours,open:e.target.value})}
-                  style={{width:"100%",border:"1.5px solid #e0d9d0",borderRadius:8,padding:"10px",fontSize:15,outline:"none",boxSizing:"border-box"}}/>
+                <input type="time" value={localHours.open} onChange={e=>setLocalHours({...localHours,open:e.target.value})} style={{width:"100%",border:"1.5px solid #e0d9d0",borderRadius:8,padding:"10px",fontSize:15,outline:"none",boxSizing:"border-box"}}/>
               </div>
               <div>
                 <div style={{fontSize:11,fontWeight:600,color:"#999",marginBottom:6}}>Closing Time</div>
-                <input type="time" value={localHours.close} onChange={e=>setLocalHours({...localHours,close:e.target.value})}
-                  style={{width:"100%",border:"1.5px solid #e0d9d0",borderRadius:8,padding:"10px",fontSize:15,outline:"none",boxSizing:"border-box"}}/>
+                <input type="time" value={localHours.close} onChange={e=>setLocalHours({...localHours,close:e.target.value})} style={{width:"100%",border:"1.5px solid #e0d9d0",borderRadius:8,padding:"10px",fontSize:15,outline:"none",boxSizing:"border-box"}}/>
               </div>
             </div>
             <div style={{fontSize:11,fontWeight:600,color:"#999",marginBottom:10}}>Open on these days</div>
             <div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:20}}>
               {DAY_NAMES.map((name,i)=>(
-                <button key={i} onClick={()=>toggleDay(i)}
-                  style={{padding:"8px 14px",borderRadius:20,border:"2px solid",fontSize:13,fontWeight:700,cursor:"pointer",
-                    borderColor:localHours.days.includes(i)?"#1a1a2e":"#ddd",
-                    background:localHours.days.includes(i)?"#1a1a2e":"white",
-                    color:localHours.days.includes(i)?"white":"#999"}}>
-                  {name}
-                </button>
+                <button key={i} onClick={()=>toggleDay(i)} style={{padding:"8px 14px",borderRadius:20,border:"2px solid",fontSize:13,fontWeight:700,cursor:"pointer",borderColor:localHours.days.includes(i)?"#1a1a2e":"#ddd",background:localHours.days.includes(i)?"#1a1a2e":"white",color:localHours.days.includes(i)?"white":"#999"}}>{name}</button>
               ))}
             </div>
             <button style={{...S.greenBtn,width:"100%",padding:"14px",fontSize:15}} onClick={saveHours}>Save Hours</button>
           </div>
-
           <div style={{background:"white",borderRadius:16,padding:"20px",boxShadow:"0 2px 8px rgba(0,0,0,0.06)"}}>
             <div style={{fontWeight:800,fontSize:15,color:"#1a1a2e",marginBottom:4}}>⏱ Session Duration</div>
-            <div style={{color:"#999",fontSize:13,marginBottom:16}}>How long students can order after scanning the QR code</div>
+            <div style={{color:"#999",fontSize:13,marginBottom:16}}>How long students can order after scanning QR</div>
             <div style={{background:"#f4f1ec",borderRadius:12,padding:"16px",textAlign:"center"}}>
               <div style={{fontSize:36,fontWeight:900,color:"#c8102e"}}>60</div>
               <div style={{color:"#666",fontSize:13,fontWeight:600}}>minutes per session</div>
-              <div style={{color:"#aaa",fontSize:11,marginTop:6}}>To change this, edit SESSION_MINUTES in App.jsx</div>
+              <div style={{color:"#aaa",fontSize:11,marginTop:6}}>To change, edit SESSION_MINUTES in App.jsx</div>
             </div>
           </div>
         </div>
       )}
 
-      {/* QR TAB */}
       {tab==="qr"&&(
         <div style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:24,gap:16}}>
           <div style={{fontSize:15,fontWeight:700,color:"#1a1a2e"}}>Your Ordering QR Code</div>
           <div style={{background:"white",padding:16,borderRadius:16,boxShadow:"0 4px 24px rgba(0,0,0,0.1)",border:"3px solid #c8102e"}}>
             <img src={`https://api.qrserver.com/v1/create-qr-code/?size=240x240&data=${encodeURIComponent(window.location.origin)}`} alt="QR" style={{width:220,height:220,display:"block"}}/>
           </div>
-          <div style={{fontSize:13,color:"#999",textAlign:"center",maxWidth:260,lineHeight:1.7}}>
-            Print this and stick it on your table.<br/>
-            Students scan → 60 min session → auto expires.
-          </div>
+          <div style={{fontSize:13,color:"#999",textAlign:"center",maxWidth:260,lineHeight:1.7}}>Print this and stick it on your table.<br/>Students scan → 60 min session → auto expires.</div>
           <a href="/qr" target="_blank" style={{...S.greenBtn,textDecoration:"none",padding:"14px 32px",fontSize:15}}>🖨️ Open Printable QR Page</a>
         </div>
       )}
@@ -789,6 +860,7 @@ function Field({label,value,onChange,placeholder,type="text"}) {
   );
 }
 
+// ─── STYLES ───────────────────────────────────────────────────────────────────
 const S = {
   shell:{minHeight:"100vh",background:"linear-gradient(135deg,#c8102e 0%,#8b0000 100%)",display:"flex",alignItems:"center",justifyContent:"center",fontFamily:"'Segoe UI',sans-serif",padding:"20px"},
   phone:{width:"100%",maxWidth:420,background:"#f9f5f0",borderRadius:32,overflow:"hidden",boxShadow:"0 30px 80px rgba(0,0,0,0.4)",minHeight:700,display:"flex",flexDirection:"column"},
