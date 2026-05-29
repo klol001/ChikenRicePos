@@ -3,7 +3,6 @@ import { BrowserRouter, Routes, Route } from "react-router-dom";
 import { initializeApp } from "firebase/app";
 import { getDatabase, ref, set, get, onValue, push, update } from "firebase/database";
 
-// ─── FIREBASE ────────────────────────────────────────────────────────────────
 const firebaseConfig = {
   apiKey: "AIzaSyB7jBZ9crwzaCSLfKazoX7E_D214-_MXjg",
   authDomain: "chickenricepos.firebaseapp.com",
@@ -16,51 +15,34 @@ const firebaseConfig = {
 const firebaseApp = initializeApp(firebaseConfig);
 const db = getDatabase(firebaseApp);
 
-// ─── PASSWORDS ───────────────────────────────────────────────────────────────
 const STALL_PASSWORD = "unclelim123";
 const ADMIN_PASSWORD = "admin888";
-
-// ─── SESSION DURATION ────────────────────────────────────────────────────────
 const SESSION_MINUTES = 60;
 
-// ─── DEFAULT MENU ─────────────────────────────────────────────────────────────
 const DEFAULT_MENU = [
-  {
-    id: 1, category: "Chicken Rice",
-    items: [
-      { id: 101, name: "Roasted Chicken Rice", price: 3.50, emoji: "🍗", desc: "Fragrant rice with roasted chicken", outOfStock: false },
-      { id: 102, name: "Steamed Chicken Rice",  price: 3.50, emoji: "🍚", desc: "Tender steamed chicken with ginger rice", outOfStock: false },
-      { id: 103, name: "Mixed Chicken Rice",    price: 4.00, emoji: "🍱", desc: "Half roasted, half steamed", outOfStock: false },
-    ],
-  },
-  {
-    id: 2, category: "Add-ons",
-    items: [
-      { id: 201, name: "Extra Chicken", price: 2.00, emoji: "🍗", desc: "Additional chicken portion", outOfStock: false },
-      { id: 202, name: "Extra Rice",    price: 0.50, emoji: "🍚", desc: "An extra scoop of rice",    outOfStock: false },
-      { id: 203, name: "Braised Egg",   price: 0.80, emoji: "🥚", desc: "Slow-cooked soy braised egg", outOfStock: false },
-      { id: 204, name: "Chilli Sauce",  price: 0.20, emoji: "🌶️", desc: "Signature house chilli",   outOfStock: false },
-    ],
-  },
-  {
-    id: 3, category: "Drinks",
-    items: [
-      { id: 301, name: "Barley Water",      price: 1.20, emoji: "🥤", desc: "Refreshing cold barley", outOfStock: false },
-      { id: 302, name: "Chrysanthemum Tea", price: 1.20, emoji: "🍵", desc: "Light and floral",       outOfStock: false },
-      { id: 303, name: "Plain Water",       price: 0.50, emoji: "💧", desc: "Chilled mineral water",  outOfStock: false },
-    ],
-  },
+  { id:1, category:"Chicken Rice", items:[
+    { id:101, name:"Roasted Chicken Rice", price:3.50, emoji:"🍗", desc:"Fragrant rice with roasted chicken", outOfStock:false },
+    { id:102, name:"Steamed Chicken Rice",  price:3.50, emoji:"🍚", desc:"Tender steamed chicken with ginger rice", outOfStock:false },
+    { id:103, name:"Mixed Chicken Rice",    price:4.00, emoji:"🍱", desc:"Half roasted, half steamed", outOfStock:false },
+  ]},
+  { id:2, category:"Add-ons", items:[
+    { id:201, name:"Extra Chicken", price:2.00, emoji:"🍗", desc:"Additional chicken portion", outOfStock:false },
+    { id:202, name:"Extra Rice",    price:0.50, emoji:"🍚", desc:"An extra scoop of rice",    outOfStock:false },
+    { id:203, name:"Braised Egg",   price:0.80, emoji:"🥚", desc:"Slow-cooked soy braised egg", outOfStock:false },
+    { id:204, name:"Chilli Sauce",  price:0.20, emoji:"🌶️", desc:"Signature house chilli",   outOfStock:false },
+  ]},
+  { id:3, category:"Drinks", items:[
+    { id:301, name:"Barley Water",      price:1.20, emoji:"🥤", desc:"Refreshing cold barley", outOfStock:false },
+    { id:302, name:"Chrysanthemum Tea", price:1.20, emoji:"🍵", desc:"Light and floral",       outOfStock:false },
+    { id:303, name:"Plain Water",       price:0.50, emoji:"💧", desc:"Chilled mineral water",  outOfStock:false },
+  ]},
 ];
 
-const DEFAULT_HOURS = {
-  open: "07:00", close: "15:00", days: [1,2,3,4,5], manualOpen: null,
-};
-
+const DEFAULT_HOURS = { open:"07:00", close:"15:00", days:[1,2,3,4,5], manualOpen:null };
 const EMOJIS = ["🍗","🍚","🍱","🥚","🌶️","🥤","🍵","💧","🍜","🥩","🧆","🫙","🧃","🥗","🍲","🫕","🧋","☕"];
 let nextId = 500;
 function genId() { return nextId++; }
 
-// ─── HELPERS ──────────────────────────────────────────────────────────────────
 function isWithinHours(hours) {
   if (hours.manualOpen === true) return true;
   if (hours.manualOpen === false) return false;
@@ -68,46 +50,41 @@ function isWithinHours(hours) {
   const day = now.getDay();
   if (!hours.days.includes(day)) return false;
   const hhmm = now.getHours() * 60 + now.getMinutes();
-  const [oh, om] = hours.open.split(":").map(Number);
-  const [ch, cm] = hours.close.split(":").map(Number);
-  return hhmm >= oh * 60 + om && hhmm < ch * 60 + cm;
+  const [oh,om] = hours.open.split(":").map(Number);
+  const [ch,cm] = hours.close.split(":").map(Number);
+  return hhmm >= oh*60+om && hhmm < ch*60+cm;
 }
 
 function formatTime(secs) {
-  const m = Math.floor(secs / 60).toString().padStart(2, "0");
-  const s = (secs % 60).toString().padStart(2, "0");
+  const m = Math.floor(secs/60).toString().padStart(2,"0");
+  const s = (secs%60).toString().padStart(2,"0");
   return `${m}:${s}`;
 }
 
 function playBeep() {
   try {
     const ctx = new (window.AudioContext || window.webkitAudioContext)();
-    [0, 150, 300].forEach(delay => {
+    [0,150,300].forEach(delay => {
       setTimeout(() => {
         const osc = ctx.createOscillator();
         const gain = ctx.createGain();
-        osc.connect(gain);
-        gain.connect(ctx.destination);
+        osc.connect(gain); gain.connect(ctx.destination);
         osc.frequency.value = 880;
         gain.gain.setValueAtTime(0.3, ctx.currentTime);
-        gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.3);
-        osc.start(ctx.currentTime);
-        osc.stop(ctx.currentTime + 0.3);
+        gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime+0.3);
+        osc.start(ctx.currentTime); osc.stop(ctx.currentTime+0.3);
       }, delay);
     });
   } catch(e) {}
 }
 
-// ─── FIREBASE HELPERS ─────────────────────────────────────────────────────────
 async function fbGet(path, fallback) {
-  try { const s = await get(ref(db, path)); return s.exists() ? s.val() : fallback; }
-  catch { return fallback; }
+  try { const s = await get(ref(db,path)); return s.exists() ? s.val() : fallback; } catch { return fallback; }
 }
-async function fbSet(path, val) { try { await set(ref(db, path), val); } catch(e) { console.error(e); } }
-async function fbPush(path, val) { try { await push(ref(db, path), val); } catch(e) { console.error(e); } }
-async function fbUpdate(path, val) { try { await update(ref(db, path), val); } catch(e) { console.error(e); } }
+async function fbSet(path, val) { try { await set(ref(db,path), val); } catch(e) { console.error(e); } }
+async function fbPush(path, val) { try { await push(ref(db,path), val); } catch(e) { console.error(e); } }
+async function fbUpdate(path, val) { try { await update(ref(db,path), val); } catch(e) { console.error(e); } }
 
-// ─── FIREBASE STATE HOOK ──────────────────────────────────────────────────────
 function useFirebaseState() {
   const [menu, setMenu] = useState(null);
   const [orders, setOrders] = useState([]);
@@ -115,35 +92,26 @@ function useFirebaseState() {
   const [hours, setHours] = useState(null);
 
   useEffect(() => {
-    fbGet("menu", null).then(m => {
-      if (m) setMenu(m);
-      else { setMenu(DEFAULT_MENU); fbSet("menu", DEFAULT_MENU); }
-    });
+    fbGet("menu", null).then(m => { if(m) setMenu(m); else { setMenu(DEFAULT_MENU); fbSet("menu", DEFAULT_MENU); } });
     fbGet("hours", DEFAULT_HOURS).then(h => setHours(h));
-    const unsubQ = onValue(ref(db, "currentServing"), s => { if (s.exists()) setCurrentServing(s.val()); });
-    const unsubO = onValue(ref(db, "orders"), s => {
-      if (s.exists()) {
-        const arr = Object.entries(s.val()).map(([k, v]) => ({ ...v, fbKey: k }));
-        arr.sort((a, b) => a.timestamp - b.timestamp);
-        setOrders(arr);
-      } else setOrders([]);
+    const unsubQ = onValue(ref(db,"currentServing"), s => { if(s.exists()) setCurrentServing(s.val()); });
+    const unsubO = onValue(ref(db,"orders"), s => {
+      if(s.exists()) { const arr = Object.entries(s.val()).map(([k,v])=>({...v,fbKey:k})); arr.sort((a,b)=>a.timestamp-b.timestamp); setOrders(arr); }
+      else setOrders([]);
     });
-    const unsubH = onValue(ref(db, "hours"), s => { if (s.exists()) setHours(s.val()); });
+    const unsubH = onValue(ref(db,"hours"), s => { if(s.exists()) setHours(s.val()); });
     return () => { unsubQ(); unsubO(); unsubH(); };
   }, []);
 
-  const updateMenu = useCallback(async m => { setMenu(m); await fbSet("menu", m); }, []);
-  const updateHours = useCallback(async h => { setHours(h); await fbSet("hours", h); }, []);
-  const addOrder = useCallback(async o => { await fbPush("orders", o); }, []);
-  const markDone = useCallback(async k => { await fbUpdate(`orders/${k}`, { status: "done" }); }, []);
-  const advanceQueue = useCallback(async () => {
-    setCurrentServing(p => { const n = p + 1; fbSet("currentServing", n); return n; });
-  }, []);
+  const updateMenu  = useCallback(async m => { setMenu(m); await fbSet("menu",m); }, []);
+  const updateHours = useCallback(async h => { setHours(h); await fbSet("hours",h); }, []);
+  const addOrder    = useCallback(async o => { await fbPush("orders",o); }, []);
+  const markDone    = useCallback(async k => { await fbUpdate(`orders/${k}`,{status:"done"}); }, []);
+  const advanceQueue = useCallback(async () => { setCurrentServing(p => { const n=p+1; fbSet("currentServing",n); return n; }); }, []);
 
   return { menu, orders, currentServing, hours, updateMenu, updateHours, addOrder, markDone, advanceQueue };
 }
 
-// ─── PASSWORD GATE ────────────────────────────────────────────────────────────
 function PasswordGate({ correctPassword, label, icon, children }) {
   const [input, setInput] = useState("");
   const [unlocked, setUnlocked] = useState(false);
@@ -152,34 +120,29 @@ function PasswordGate({ correctPassword, label, icon, children }) {
 
   function attempt() {
     if (input === correctPassword) { setUnlocked(true); }
-    else {
-      setError(true); setShake(true); setInput("");
-      setTimeout(() => setShake(false), 500);
-      setTimeout(() => setError(false), 2000);
-    }
+    else { setError(true); setShake(true); setInput(""); setTimeout(()=>setShake(false),500); setTimeout(()=>setError(false),2000); }
   }
 
   if (unlocked) return children;
   return (
-    <div style={{ minHeight:"100vh", background:"linear-gradient(135deg,#1a1a2e,#16213e)", display:"flex", alignItems:"center", justifyContent:"center", fontFamily:"'Segoe UI',sans-serif", padding:20 }}>
+    <div style={{minHeight:"100vh",background:"linear-gradient(135deg,#1a1a2e,#16213e)",display:"flex",alignItems:"center",justifyContent:"center",fontFamily:"'Segoe UI',sans-serif",padding:20}}>
       <style>{`@keyframes shake{0%,100%{transform:translateX(0)}25%{transform:translateX(-8px)}75%{transform:translateX(8px)}}`}</style>
-      <div style={{ background:"#1e2130", borderRadius:24, padding:"40px 32px", width:"100%", maxWidth:360, boxShadow:"0 20px 60px rgba(0,0,0,0.5)", animation:shake?"shake 0.4s ease":"none" }}>
-        <div style={{ textAlign:"center", marginBottom:28 }}>
-          <div style={{ fontSize:52, marginBottom:12 }}>{icon}</div>
-          <div style={{ color:"white", fontSize:22, fontWeight:900 }}>{label}</div>
-          <div style={{ color:"#666", fontSize:13, marginTop:6 }}>Enter password to continue</div>
+      <div style={{background:"#1e2130",borderRadius:24,padding:"40px 32px",width:"100%",maxWidth:360,boxShadow:"0 20px 60px rgba(0,0,0,0.5)",animation:shake?"shake 0.4s ease":"none"}}>
+        <div style={{textAlign:"center",marginBottom:28}}>
+          <div style={{fontSize:52,marginBottom:12}}>{icon}</div>
+          <div style={{color:"white",fontSize:22,fontWeight:900}}>{label}</div>
+          <div style={{color:"#666",fontSize:13,marginTop:6}}>Enter password to continue</div>
         </div>
         <input type="password" placeholder="Password" value={input} onChange={e=>setInput(e.target.value)} onKeyDown={e=>e.key==="Enter"&&attempt()} autoFocus
-          style={{ width:"100%", background:"#2a2d3e", border:error?"2px solid #ef4444":"2px solid #3a3d4e", borderRadius:12, padding:"14px 16px", fontSize:16, color:"white", outline:"none", boxSizing:"border-box", fontFamily:"inherit", marginBottom:12 }}/>
-        {error && <div style={{ color:"#ef4444", fontSize:13, textAlign:"center", marginBottom:12, fontWeight:600 }}>❌ Wrong password</div>}
-        <button onClick={attempt} style={{ width:"100%", background:"#c8102e", color:"white", border:"none", borderRadius:12, padding:"15px", fontSize:15, fontWeight:700, cursor:"pointer" }}>Unlock →</button>
-        <div style={{ textAlign:"center", marginTop:20 }}><a href="/" style={{ color:"#444", fontSize:12, textDecoration:"none" }}>← Back to ordering</a></div>
+          style={{width:"100%",background:"#2a2d3e",border:error?"2px solid #ef4444":"2px solid #3a3d4e",borderRadius:12,padding:"14px 16px",fontSize:16,color:"white",outline:"none",boxSizing:"border-box",fontFamily:"inherit",marginBottom:12}}/>
+        {error && <div style={{color:"#ef4444",fontSize:13,textAlign:"center",marginBottom:12,fontWeight:600}}>❌ Wrong password</div>}
+        <button onClick={attempt} style={{width:"100%",background:"#c8102e",color:"white",border:"none",borderRadius:12,padding:"15px",fontSize:15,fontWeight:700,cursor:"pointer"}}>Unlock →</button>
+        <div style={{textAlign:"center",marginTop:20}}><a href="/" style={{color:"#444",fontSize:12,textDecoration:"none"}}>← Back to ordering</a></div>
       </div>
     </div>
   );
 }
 
-// ─── ROOT APP ─────────────────────────────────────────────────────────────────
 export default function App() {
   const state = useFirebaseState();
   if (!state.menu || !state.hours) return <LoadingScreen />;
@@ -194,12 +157,7 @@ export default function App() {
         } />
         <Route path="/admin" element={
           <PasswordGate correctPassword={ADMIN_PASSWORD} label="Admin Panel" icon="⚙️">
-            <AdminPanel menu={state.menu} hours={state.hours} onUpdateMenu={state.updateMenu} onUpdateHours={state.updateHours} />
-          </PasswordGate>
-        } />
-        <Route path="/report" element={
-          <PasswordGate correctPassword={STALL_PASSWORD} label="Sales Report" icon="📊">
-            <SalesReport orders={state.orders} />
+            <AdminPanel menu={state.menu} hours={state.hours} orders={state.orders} onUpdateMenu={state.updateMenu} onUpdateHours={state.updateHours} />
           </PasswordGate>
         } />
         <Route path="/qr" element={<QRPage />} />
@@ -209,51 +167,47 @@ export default function App() {
   );
 }
 
-// ─── LOADING ──────────────────────────────────────────────────────────────────
 function LoadingScreen() {
   return (
-    <div style={{ minHeight:"100vh", background:"linear-gradient(135deg,#c8102e,#8b0000)", display:"flex", alignItems:"center", justifyContent:"center", flexDirection:"column", gap:16, fontFamily:"'Segoe UI',sans-serif" }}>
+    <div style={{minHeight:"100vh",background:"linear-gradient(135deg,#c8102e,#8b0000)",display:"flex",alignItems:"center",justifyContent:"center",flexDirection:"column",gap:16,fontFamily:"'Segoe UI',sans-serif"}}>
       <style>{`@keyframes pulse{0%,100%{transform:scale(1)}50%{transform:scale(1.15)}}`}</style>
-      <div style={{ fontSize:64, animation:"pulse 1s infinite" }}>🍗</div>
-      <div style={{ color:"white", fontSize:18, fontWeight:700 }}>Loading…</div>
+      <div style={{fontSize:64,animation:"pulse 1s infinite"}}>🍗</div>
+      <div style={{color:"white",fontSize:18,fontWeight:700}}>Loading…</div>
     </div>
   );
 }
 
 function NotFound() {
   return (
-    <div style={{ minHeight:"100vh", background:"#1a1a2e", display:"flex", alignItems:"center", justifyContent:"center", flexDirection:"column", gap:16, fontFamily:"'Segoe UI',sans-serif" }}>
-      <div style={{ fontSize:64 }}>🍗</div>
-      <div style={{ color:"white", fontSize:24, fontWeight:900 }}>Page not found</div>
-      <a href="/" style={{ color:"#c8102e", fontSize:15, fontWeight:600 }}>← Go to ordering</a>
+    <div style={{minHeight:"100vh",background:"#1a1a2e",display:"flex",alignItems:"center",justifyContent:"center",flexDirection:"column",gap:16,fontFamily:"'Segoe UI',sans-serif"}}>
+      <div style={{fontSize:64}}>🍗</div>
+      <div style={{color:"white",fontSize:24,fontWeight:900}}>Page not found</div>
+      <a href="/" style={{color:"#c8102e",fontSize:15,fontWeight:600}}>← Go to ordering</a>
     </div>
   );
 }
 
-// ─── QR PAGE ──────────────────────────────────────────────────────────────────
 function QRPage() {
   const url = window.location.origin;
-  const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(url)}`;
   return (
-    <div style={{ minHeight:"100vh", background:"white", display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", fontFamily:"'Segoe UI',sans-serif", padding:40, gap:24 }}>
-      <div style={{ fontSize:48 }}>🍗</div>
-      <div style={{ fontSize:28, fontWeight:900, color:"#1a1a2e" }}>Uncle Lim's Chicken Rice</div>
-      <div style={{ fontSize:16, color:"#666", fontWeight:600 }}>Scan to Order</div>
-      <div style={{ background:"white", padding:20, borderRadius:20, boxShadow:"0 4px 40px rgba(0,0,0,0.12)", border:"3px solid #c8102e" }}>
-        <img src={qrUrl} alt="QR Code" style={{ width:260, height:260, display:"block" }}/>
+    <div style={{minHeight:"100vh",background:"white",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",fontFamily:"'Segoe UI',sans-serif",padding:40,gap:24}}>
+      <div style={{fontSize:48}}>🍗</div>
+      <div style={{fontSize:28,fontWeight:900,color:"#1a1a2e"}}>Uncle Lim's Chicken Rice</div>
+      <div style={{fontSize:16,color:"#666",fontWeight:600}}>Scan to Order</div>
+      <div style={{background:"white",padding:20,borderRadius:20,boxShadow:"0 4px 40px rgba(0,0,0,0.12)",border:"3px solid #c8102e"}}>
+        <img src={`https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(url)}`} alt="QR Code" style={{width:260,height:260,display:"block"}}/>
       </div>
-      <div style={{ fontSize:14, color:"#999", textAlign:"center", maxWidth:280, lineHeight:1.7 }}>
+      <div style={{fontSize:14,color:"#999",textAlign:"center",maxWidth:280,lineHeight:1.7}}>
         Point your phone camera at this QR code to start ordering.<br/>
-        <strong style={{ color:"#c8102e" }}>Session expires after 60 minutes.</strong>
+        <strong style={{color:"#c8102e"}}>Session expires after 60 minutes.</strong>
       </div>
-      <div style={{ background:"#f4f1ec", borderRadius:12, padding:"10px 20px", fontSize:13, color:"#666" }}>{url}</div>
-      <button onClick={() => window.print()} style={{ background:"#1a1a2e", color:"white", border:"none", borderRadius:12, padding:"14px 32px", fontSize:15, fontWeight:700, cursor:"pointer" }}>🖨️ Print this QR</button>
+      <div style={{background:"#f4f1ec",borderRadius:12,padding:"10px 20px",fontSize:13,color:"#666"}}>{url}</div>
+      <button onClick={()=>window.print()} style={{background:"#1a1a2e",color:"white",border:"none",borderRadius:12,padding:"14px 32px",fontSize:15,fontWeight:700,cursor:"pointer"}}>🖨️ Print this QR</button>
       <style>{`@media print { button { display:none; } }`}</style>
     </div>
   );
 }
 
-// ─── ORDER GATE ───────────────────────────────────────────────────────────────
 function OrderGate({ state }) {
   const { hours, menu, currentServing, addOrder } = state;
   const [sessionState, setSessionState] = useState("checking");
@@ -261,64 +215,58 @@ function OrderGate({ state }) {
 
   useEffect(() => {
     if (!hours) return;
-    if (isWithinHours(hours)) { setSessionState("open"); setSecondsLeft(SESSION_MINUTES * 60); }
+    if (isWithinHours(hours)) { setSessionState("open"); setSecondsLeft(SESSION_MINUTES*60); }
     else setSessionState("closed");
   }, [hours]);
 
   useEffect(() => {
     if (sessionState !== "open") return;
     const t = setInterval(() => {
-      setSecondsLeft(prev => {
-        if (prev <= 1) { clearInterval(t); setSessionState("expired"); return 0; }
-        return prev - 1;
-      });
+      setSecondsLeft(prev => { if(prev<=1){ clearInterval(t); setSessionState("expired"); return 0; } return prev-1; });
     }, 1000);
     return () => clearInterval(t);
   }, [sessionState]);
 
-  if (sessionState === "checking") return <LoadingScreen />;
-  if (sessionState === "closed") return <ClosedScreen hours={hours} />;
-  if (sessionState === "expired") return <ExpiredScreen />;
+  if (sessionState==="checking") return <LoadingScreen />;
+  if (sessionState==="closed")   return <ClosedScreen hours={hours} />;
+  if (sessionState==="expired")  return <ExpiredScreen />;
   return <OrderFlow menu={menu} currentServing={currentServing} addOrder={addOrder} secondsLeft={secondsLeft} />;
 }
 
-// ─── CLOSED SCREEN ────────────────────────────────────────────────────────────
 function ClosedScreen({ hours }) {
   const dayNames = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
-  const days = hours.days.map(d => dayNames[d]).join(", ");
+  const days = hours.days.map(d=>dayNames[d]).join(", ");
   return (
-    <div style={{ minHeight:"100vh", background:"linear-gradient(135deg,#1a1a2e,#16213e)", display:"flex", alignItems:"center", justifyContent:"center", fontFamily:"'Segoe UI',sans-serif", padding:20 }}>
-      <div style={{ textAlign:"center", maxWidth:340 }}>
-        <div style={{ fontSize:80, marginBottom:16 }}>🔒</div>
-        <div style={{ color:"white", fontSize:26, fontWeight:900, marginBottom:8 }}>Canteen Closed</div>
-        <div style={{ color:"#666", fontSize:15, lineHeight:1.7, marginBottom:24 }}>Uncle Lim's is currently closed.<br/>Come back during operating hours!</div>
-        <div style={{ background:"#1e2130", borderRadius:16, padding:"20px 24px", border:"1px solid #2a2d3e" }}>
-          <div style={{ color:"#f59e0b", fontWeight:700, fontSize:13, marginBottom:12, textTransform:"uppercase", letterSpacing:"1px" }}>Operating Hours</div>
-          <div style={{ color:"white", fontSize:18, fontWeight:800 }}>{hours.open} – {hours.close}</div>
-          <div style={{ color:"#666", fontSize:13, marginTop:6 }}>{days}</div>
+    <div style={{minHeight:"100vh",background:"linear-gradient(135deg,#1a1a2e,#16213e)",display:"flex",alignItems:"center",justifyContent:"center",fontFamily:"'Segoe UI',sans-serif",padding:20}}>
+      <div style={{textAlign:"center",maxWidth:340}}>
+        <div style={{fontSize:80,marginBottom:16}}>🔒</div>
+        <div style={{color:"white",fontSize:26,fontWeight:900,marginBottom:8}}>Canteen Closed</div>
+        <div style={{color:"#666",fontSize:15,lineHeight:1.7,marginBottom:24}}>Uncle Lim's is currently closed.<br/>Come back during operating hours!</div>
+        <div style={{background:"#1e2130",borderRadius:16,padding:"20px 24px",border:"1px solid #2a2d3e"}}>
+          <div style={{color:"#f59e0b",fontWeight:700,fontSize:13,marginBottom:12,textTransform:"uppercase",letterSpacing:"1px"}}>Operating Hours</div>
+          <div style={{color:"white",fontSize:18,fontWeight:800}}>{hours.open} – {hours.close}</div>
+          <div style={{color:"#666",fontSize:13,marginTop:6}}>{days}</div>
         </div>
       </div>
     </div>
   );
 }
 
-// ─── EXPIRED SCREEN ───────────────────────────────────────────────────────────
 function ExpiredScreen() {
   return (
-    <div style={{ minHeight:"100vh", background:"linear-gradient(135deg,#1a1a2e,#16213e)", display:"flex", alignItems:"center", justifyContent:"center", fontFamily:"'Segoe UI',sans-serif", padding:20 }}>
-      <div style={{ textAlign:"center", maxWidth:320 }}>
-        <div style={{ fontSize:80, marginBottom:16 }}>⏰</div>
-        <div style={{ color:"white", fontSize:26, fontWeight:900, marginBottom:8 }}>Session Expired</div>
-        <div style={{ color:"#666", fontSize:15, lineHeight:1.7, marginBottom:28 }}>Your 60-minute ordering session has ended.<br/>Please scan the QR code again to order.</div>
-        <div style={{ background:"#1e2130", borderRadius:16, padding:"16px 20px", border:"1px solid #c8102e44" }}>
-          <div style={{ color:"#c8102e", fontSize:13, fontWeight:700 }}>📱 Scan the QR code at the stall to start a new session</div>
+    <div style={{minHeight:"100vh",background:"linear-gradient(135deg,#1a1a2e,#16213e)",display:"flex",alignItems:"center",justifyContent:"center",fontFamily:"'Segoe UI',sans-serif",padding:20}}>
+      <div style={{textAlign:"center",maxWidth:320}}>
+        <div style={{fontSize:80,marginBottom:16}}>⏰</div>
+        <div style={{color:"white",fontSize:26,fontWeight:900,marginBottom:8}}>Session Expired</div>
+        <div style={{color:"#666",fontSize:15,lineHeight:1.7,marginBottom:28}}>Your 60-minute ordering session has ended.<br/>Please scan the QR code again to order.</div>
+        <div style={{background:"#1e2130",borderRadius:16,padding:"16px 20px",border:"1px solid #c8102e44"}}>
+          <div style={{color:"#c8102e",fontSize:13,fontWeight:700}}>📱 Scan the QR code at the stall to start a new session</div>
         </div>
       </div>
     </div>
   );
 }
 
-// ─── ORDER FLOW ───────────────────────────────────────────────────────────────
 function OrderFlow({ menu, currentServing, addOrder, secondsLeft }) {
   const [screen, setScreen] = useState("menu");
   const [cart, setCart] = useState({});
@@ -328,45 +276,34 @@ function OrderFlow({ menu, currentServing, addOrder, secondsLeft }) {
   const [queueNum, setQueueNum] = useState(null);
   const [placing, setPlacing] = useState(false);
 
-  const cartItems = Object.values(cart).filter(i => i.qty > 0);
-  const total = cartItems.reduce((s, i) => s + i.price * i.qty, 0);
-  const totalQty = cartItems.reduce((s, i) => s + i.qty, 0);
+  const cartItems = Object.values(cart).filter(i=>i.qty>0);
+  const total = cartItems.reduce((s,i)=>s+i.price*i.qty, 0);
+  const totalQty = cartItems.reduce((s,i)=>s+i.qty, 0);
   const isLow = secondsLeft <= 300;
 
-  function add(item) { setCart(p => ({ ...p, [item.id]: { ...item, qty: (p[item.id]?.qty||0)+1 } })); }
-  function remove(id) {
-    setCart(p => { const u={...p}; if(u[id]?.qty>1) u[id]={...u[id],qty:u[id].qty-1}; else delete u[id]; return u; });
-  }
+  function add(item) { setCart(p=>({...p,[item.id]:{...item,qty:(p[item.id]?.qty||0)+1}})); }
+  function remove(id) { setCart(p=>{ const u={...p}; if(u[id]?.qty>1) u[id]={...u[id],qty:u[id].qty-1}; else delete u[id]; return u; }); }
 
   async function simulatePay() {
     setPayStep("processing");
-    await new Promise(r => setTimeout(r, 2000));
+    await new Promise(r=>setTimeout(r,2000));
     setPayStep("done");
-    await new Promise(r => setTimeout(r, 1000));
+    await new Promise(r=>setTimeout(r,1000));
     const num = currentServing + Math.floor(Math.random()*8) + 1;
-    setQueueNum(num);
-    setPlacing(true);
-    await addOrder({
-      queueNum: num,
-      items: cartItems.map(i => ({id:i.id,name:i.name,emoji:i.emoji,price:i.price,qty:i.qty})),
-      note, total,
-      time: new Date().toLocaleTimeString("en-MY",{hour:"2-digit",minute:"2-digit"}),
-      status: "pending",
-      timestamp: Date.now(),
-    });
-    setPlacing(false);
-    setScreen("confirm");
+    setQueueNum(num); setPlacing(true);
+    await addOrder({ queueNum:num, items:cartItems.map(i=>({id:i.id,name:i.name,emoji:i.emoji,price:i.price,qty:i.qty})), note, total, time:new Date().toLocaleTimeString("en-MY",{hour:"2-digit",minute:"2-digit"}), status:"pending", timestamp:Date.now() });
+    setPlacing(false); setScreen("confirm");
   }
 
   function reset() { setCart({}); setNote(""); setQueueNum(null); setPayStep("qr"); setScreen("menu"); }
-  const activeGroup = menu.find(g => g.id === activeCategory);
+  const activeGroup = menu.find(g=>g.id===activeCategory);
 
   return (
     <div style={S.shell}>
       <div style={S.phone}>
-        <div style={{ background:isLow?"#ef4444":"#1a1a2e", padding:"8px 16px", display:"flex", justifyContent:"space-between", alignItems:"center" }}>
-          <span style={{ color:isLow?"white":"#666", fontSize:12, fontWeight:600 }}>{isLow?"⚠️ Session ending soon!":"⏱ Session"}</span>
-          <span style={{ color:isLow?"white":"#f59e0b", fontSize:14, fontWeight:800, fontFamily:"monospace" }}>{formatTime(secondsLeft)}</span>
+        <div style={{background:isLow?"#ef4444":"#1a1a2e",padding:"8px 16px",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+          <span style={{color:isLow?"white":"#666",fontSize:12,fontWeight:600}}>{isLow?"⚠️ Session ending soon!":"⏱ Session"}</span>
+          <span style={{color:isLow?"white":"#f59e0b",fontSize:14,fontWeight:800,fontFamily:"monospace"}}>{formatTime(secondsLeft)}</span>
         </div>
 
         {screen==="menu"&&<>
@@ -471,20 +408,15 @@ function FakeQR() {
   );
 }
 
-// ─── STALL DASHBOARD ──────────────────────────────────────────────────────────
 function StallDashboard({ orders, currentServing, advanceQueue, markDone, hours, updateHours }) {
-  const pending = orders.filter(o => o.status==="pending");
-  const done = orders.filter(o => o.status==="done");
+  const pending = orders.filter(o=>o.status==="pending");
+  const done    = orders.filter(o=>o.status==="done");
   const prevPending = useRef(pending.length);
   const [newOrder, setNewOrder] = useState(false);
   const isOpen = hours ? isWithinHours(hours) : false;
 
   useEffect(() => {
-    if (pending.length > prevPending.current) {
-      setNewOrder(true);
-      setTimeout(() => setNewOrder(false), 3000);
-      playBeep();
-    }
+    if (pending.length > prevPending.current) { setNewOrder(true); setTimeout(()=>setNewOrder(false),3000); playBeep(); }
     prevPending.current = pending.length;
   }, [pending.length]);
 
@@ -501,7 +433,6 @@ function StallDashboard({ orders, currentServing, advanceQueue, markDone, hours,
             {isOpen?"Open · Accepting orders":"Closed · Not accepting orders"}
           </div>
         </div>
-        <a href="/report" style={{background:"rgba(255,255,255,0.1)",color:"white",borderRadius:8,padding:"8px 14px",fontSize:13,fontWeight:600,textDecoration:"none"}}>📊 Report</a>
         <div style={{textAlign:"right"}}>
           <div style={{color:"#aaa",fontSize:11,fontWeight:600}}>NOW SERVING</div>
           <div style={{color:"#c8102e",fontSize:32,fontWeight:900,lineHeight:1}}>#{currentServing}</div>
@@ -515,13 +446,10 @@ function StallDashboard({ orders, currentServing, advanceQueue, markDone, hours,
             <div style={{color:"#555",fontSize:12}}>{hours?.manualOpen===null||hours?.manualOpen===undefined?"Following schedule":"Override active"}</div>
           </div>
           <div style={{display:"flex",gap:8}}>
-            <button style={{background:hours?.manualOpen===true?"#10b981":"#1e2130",color:"white",border:"none",borderRadius:10,padding:"8px 16px",fontSize:13,fontWeight:700,cursor:"pointer"}}
-              onClick={()=>updateHours({...hours,manualOpen:true})}>Force Open</button>
-            <button style={{background:hours?.manualOpen===false?"#ef4444":"#1e2130",color:"white",border:"none",borderRadius:10,padding:"8px 16px",fontSize:13,fontWeight:700,cursor:"pointer"}}
-              onClick={()=>updateHours({...hours,manualOpen:false})}>Force Close</button>
+            <button style={{background:hours?.manualOpen===true?"#10b981":"#1e2130",color:"white",border:"none",borderRadius:10,padding:"8px 16px",fontSize:13,fontWeight:700,cursor:"pointer"}} onClick={()=>updateHours({...hours,manualOpen:true})}>Force Open</button>
+            <button style={{background:hours?.manualOpen===false?"#ef4444":"#1e2130",color:"white",border:"none",borderRadius:10,padding:"8px 16px",fontSize:13,fontWeight:700,cursor:"pointer"}} onClick={()=>updateHours({...hours,manualOpen:false})}>Force Close</button>
             {hours?.manualOpen!==null&&hours?.manualOpen!==undefined&&(
-              <button style={{background:"#2a2d3e",color:"#aaa",border:"none",borderRadius:10,padding:"8px 12px",fontSize:12,fontWeight:600,cursor:"pointer"}}
-                onClick={()=>updateHours({...hours,manualOpen:null})}>Auto</button>
+              <button style={{background:"#2a2d3e",color:"#aaa",border:"none",borderRadius:10,padding:"8px 12px",fontSize:12,fontWeight:600,cursor:"pointer"}} onClick={()=>updateHours({...hours,manualOpen:null})}>Auto</button>
             )}
           </div>
         </div>
@@ -580,7 +508,6 @@ function StallDashboard({ orders, currentServing, advanceQueue, markDone, hours,
   );
 }
 
-// ─── SALES REPORT ─────────────────────────────────────────────────────────────
 function SalesReport({ orders }) {
   const [period, setPeriod] = useState("today");
 
@@ -591,19 +518,13 @@ function SalesReport({ orders }) {
     return 0;
   }
 
-  const filtered = orders.filter(o => o.status==="done" && o.timestamp>=startOf(period));
+  const filtered = orders.filter(o=>o.status==="done"&&o.timestamp>=startOf(period));
   const revenue = filtered.reduce((s,o)=>s+o.total,0);
   const orderCount = filtered.length;
   const avgOrder = orderCount>0 ? revenue/orderCount : 0;
 
   const itemMap = {};
-  filtered.forEach(o => {
-    o.items?.forEach(item => {
-      if (!itemMap[item.name]) itemMap[item.name]={name:item.name,emoji:item.emoji,qty:0,revenue:0};
-      itemMap[item.name].qty+=item.qty;
-      itemMap[item.name].revenue+=item.price*item.qty;
-    });
-  });
+  filtered.forEach(o=>{ o.items?.forEach(item=>{ if(!itemMap[item.name]) itemMap[item.name]={name:item.name,emoji:item.emoji,qty:0,revenue:0}; itemMap[item.name].qty+=item.qty; itemMap[item.name].revenue+=item.price*item.qty; }); });
   const topItems = Object.values(itemMap).sort((a,b)=>b.qty-a.qty).slice(0,5);
   const maxCount = Math.max(...topItems.map(i=>i.qty),1);
 
@@ -614,96 +535,84 @@ function SalesReport({ orders }) {
   const periodLabel = period==="today"?"Today":period==="week"?"Last 7 Days":"All Time";
 
   return (
-    <div style={{minHeight:"100vh",background:"#0f1117",fontFamily:"'Segoe UI',sans-serif",display:"flex",flexDirection:"column"}}>
-      <div style={{background:"#1a1a2e",padding:"16px 20px",display:"flex",alignItems:"center",gap:12,borderBottom:"3px solid #c8102e"}}>
-        <div style={{flex:1}}><div style={{color:"white",fontSize:20,fontWeight:900}}>📊 Sales Report</div><div style={{color:"#aaa",fontSize:12}}>Uncle Lim's Chicken Rice</div></div>
-        <a href="/stall" style={{background:"rgba(255,255,255,0.1)",color:"white",borderRadius:8,padding:"8px 14px",fontSize:13,fontWeight:600,textDecoration:"none"}}>← Dashboard</a>
-      </div>
-
-      <div style={{display:"flex",background:"#16181f",padding:"12px 16px",gap:8,borderBottom:"1px solid #1e2130"}}>
+    <div style={{display:"flex",flexDirection:"column",gap:14}}>
+      <div style={{display:"flex",gap:8,padding:"0 0 4px"}}>
         {[["today","Today"],["week","7 Days"],["all","All Time"]].map(([val,label])=>(
-          <button key={val} onClick={()=>setPeriod(val)} style={{flex:1,padding:"10px",border:"none",borderRadius:10,fontSize:13,fontWeight:700,cursor:"pointer",background:period===val?"#c8102e":"#1e2130",color:period===val?"white":"#666"}}>{label}</button>
+          <button key={val} onClick={()=>setPeriod(val)} style={{flex:1,padding:"10px",border:"none",borderRadius:10,fontSize:13,fontWeight:700,cursor:"pointer",background:period===val?"#c8102e":"#f0ebe4",color:period===val?"white":"#888"}}>
+            {label}
+          </button>
         ))}
       </div>
 
-      <div style={{flex:1,overflowY:"auto",padding:"16px",display:"flex",flexDirection:"column",gap:14}}>
-        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:10}}>
-          {[
-            {label:"Revenue",value:`RM ${revenue.toFixed(2)}`,color:"#10b981",bg:"#0a2a1a",icon:"💰"},
-            {label:"Orders",value:orderCount,color:"#3b82f6",bg:"#0a1a3a",icon:"🧾"},
-            {label:"Avg Order",value:`RM ${avgOrder.toFixed(2)}`,color:"#f59e0b",bg:"#2a2200",icon:"📈"},
-          ].map(s=>(
-            <div key={s.label} style={{background:s.bg,borderRadius:14,padding:"14px 10px",textAlign:"center",border:`1px solid ${s.color}33`}}>
-              <div style={{fontSize:20,marginBottom:4}}>{s.icon}</div>
-              <div style={{color:s.color,fontSize:s.label==="Orders"?22:13,fontWeight:900,lineHeight:1.2}}>{s.value}</div>
-              <div style={{color:"#555",fontSize:11,fontWeight:600,marginTop:4}}>{s.label}</div>
-            </div>
-          ))}
-        </div>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:10}}>
+        {[
+          {label:"Revenue",value:`RM ${revenue.toFixed(2)}`,color:"#10b981",bg:"#ecfdf5",icon:"💰"},
+          {label:"Orders",value:orderCount,color:"#3b82f6",bg:"#eff6ff",icon:"🧾"},
+          {label:"Avg Order",value:`RM ${avgOrder.toFixed(2)}`,color:"#f59e0b",bg:"#fffbeb",icon:"📈"},
+        ].map(s=>(
+          <div key={s.label} style={{background:s.bg,borderRadius:14,padding:"14px 10px",textAlign:"center",border:`1px solid ${s.color}33`}}>
+            <div style={{fontSize:18,marginBottom:4}}>{s.icon}</div>
+            <div style={{color:s.color,fontSize:s.label==="Orders"?22:12,fontWeight:900,lineHeight:1.2}}>{s.value}</div>
+            <div style={{color:"#aaa",fontSize:11,fontWeight:600,marginTop:4}}>{s.label}</div>
+          </div>
+        ))}
+      </div>
 
-        <div style={{background:"#1e2130",borderRadius:16,padding:"18px",border:"1px solid #2a2d3e"}}>
-          <div style={{color:"white",fontWeight:800,fontSize:15,marginBottom:16}}>🏆 Top Selling Items — {periodLabel}</div>
-          {topItems.length===0?(
-            <div style={{color:"#444",textAlign:"center",padding:"20px 0"}}>No sales data yet</div>
-          ):topItems.map((item,i)=>(
-            <div key={item.name} style={{marginBottom:14}}>
-              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
-                <div style={{display:"flex",alignItems:"center",gap:8}}>
-                  <div style={{color:"#f59e0b",fontWeight:900,fontSize:13,minWidth:20}}>#{i+1}</div>
-                  <div style={{fontSize:18}}>{item.emoji}</div>
-                  <div style={{color:"white",fontSize:13,fontWeight:600}}>{item.name}</div>
-                </div>
-                <div style={{textAlign:"right"}}>
-                  <div style={{color:"#10b981",fontSize:13,fontWeight:700}}>×{item.qty}</div>
-                  <div style={{color:"#555",fontSize:11}}>RM {item.revenue.toFixed(2)}</div>
-                </div>
+      <div style={{background:"white",borderRadius:16,padding:"18px",boxShadow:"0 2px 8px rgba(0,0,0,0.06)"}}>
+        <div style={{color:"#1a1a2e",fontWeight:800,fontSize:15,marginBottom:16}}>🏆 Top Items — {periodLabel}</div>
+        {topItems.length===0?<div style={{color:"#ccc",textAlign:"center",padding:"16px 0"}}>No sales data yet</div>:topItems.map((item,i)=>(
+          <div key={item.name} style={{marginBottom:14}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
+              <div style={{display:"flex",alignItems:"center",gap:8}}>
+                <div style={{color:"#f59e0b",fontWeight:900,fontSize:13,minWidth:20}}>#{i+1}</div>
+                <div style={{fontSize:18}}>{item.emoji}</div>
+                <div style={{color:"#1a1a2e",fontSize:13,fontWeight:600}}>{item.name}</div>
               </div>
-              <div style={{background:"#2a2d3e",borderRadius:8,height:8,overflow:"hidden"}}>
-                <div style={{background:"linear-gradient(90deg,#c8102e,#f59e0b)",height:"100%",borderRadius:8,width:`${(item.qty/maxCount)*100}%`}}/>
+              <div style={{textAlign:"right"}}>
+                <div style={{color:"#10b981",fontSize:13,fontWeight:700}}>×{item.qty}</div>
+                <div style={{color:"#aaa",fontSize:11}}>RM {item.revenue.toFixed(2)}</div>
               </div>
             </div>
-          ))}
-        </div>
-
-        <div style={{background:"#1e2130",borderRadius:16,padding:"18px",border:"1px solid #2a2d3e"}}>
-          <div style={{color:"white",fontWeight:800,fontSize:15,marginBottom:4}}>⏰ Busiest Hours — {periodLabel}</div>
-          {byHour.every(h=>h===0)?(
-            <div style={{color:"#444",textAlign:"center",padding:"20px 0"}}>No data yet</div>
-          ):<>
-            <div style={{color:"#aaa",fontSize:12,marginBottom:16}}>Peak hour: <span style={{color:"#f59e0b",fontWeight:700}}>{peakHour}:00–{peakHour+1}:00</span> ({byHour[peakHour]} orders)</div>
-            <div style={{display:"flex",alignItems:"flex-end",gap:3,height:80}}>
-              {Array(24).fill(0).map((_,h)=>(
-                <div key={h} style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",gap:2}}>
-                  <div style={{width:"100%",background:h===peakHour?"#f59e0b":"#c8102e",borderRadius:"3px 3px 0 0",height:`${(byHour[h]/maxHour)*64}px`,minHeight:byHour[h]>0?4:0}}/>
-                  <div style={{color:byHour[h]>0?"#555":"#222",fontSize:8,fontWeight:600}}>{h}</div>
-                </div>
-              ))}
+            <div style={{background:"#f4f1ec",borderRadius:8,height:8,overflow:"hidden"}}>
+              <div style={{background:"linear-gradient(90deg,#c8102e,#f59e0b)",height:"100%",borderRadius:8,width:`${(item.qty/maxCount)*100}%`}}/>
             </div>
-          </>}
-        </div>
+          </div>
+        ))}
+      </div>
 
-        <div style={{background:"#1e2130",borderRadius:16,padding:"18px",border:"1px solid #2a2d3e"}}>
-          <div style={{color:"white",fontWeight:800,fontSize:15,marginBottom:14}}>🧾 Recent Orders — {periodLabel}</div>
-          {filtered.length===0?(
-            <div style={{color:"#444",textAlign:"center",padding:"20px 0"}}>No completed orders yet</div>
-          ):[...filtered].reverse().slice(0,20).map(order=>(
-            <div key={order.fbKey} style={{borderBottom:"1px solid #2a2d3e",paddingBottom:12,marginBottom:12}}>
-              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:4}}>
-                <div style={{color:"#f59e0b",fontWeight:700,fontSize:14}}>#{order.queueNum}</div>
-                <div style={{color:"#10b981",fontWeight:700,fontSize:14}}>RM {order.total.toFixed(2)}</div>
+      <div style={{background:"white",borderRadius:16,padding:"18px",boxShadow:"0 2px 8px rgba(0,0,0,0.06)"}}>
+        <div style={{color:"#1a1a2e",fontWeight:800,fontSize:15,marginBottom:4}}>⏰ Busiest Hours — {periodLabel}</div>
+        {byHour.every(h=>h===0)?<div style={{color:"#ccc",textAlign:"center",padding:"16px 0"}}>No data yet</div>:<>
+          <div style={{color:"#aaa",fontSize:12,marginBottom:12}}>Peak: <span style={{color:"#f59e0b",fontWeight:700}}>{peakHour}:00–{peakHour+1}:00</span> ({byHour[peakHour]} orders)</div>
+          <div style={{display:"flex",alignItems:"flex-end",gap:3,height:72}}>
+            {Array(24).fill(0).map((_,h)=>(
+              <div key={h} style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",gap:2}}>
+                <div style={{width:"100%",background:h===peakHour?"#f59e0b":"#c8102e",borderRadius:"3px 3px 0 0",height:`${(byHour[h]/maxHour)*56}px`,minHeight:byHour[h]>0?4:0}}/>
+                <div style={{color:byHour[h]>0?"#aaa":"#ddd",fontSize:8}}>{h}</div>
               </div>
-              <div style={{color:"#666",fontSize:12}}>{order.items?.map(i=>`${i.emoji}${i.name} ×${i.qty}`).join(", ")}</div>
-              <div style={{color:"#444",fontSize:11,marginTop:3}}>{order.time} · {new Date(order.timestamp).toLocaleDateString("en-MY")}</div>
+            ))}
+          </div>
+        </>}
+      </div>
+
+      <div style={{background:"white",borderRadius:16,padding:"18px",boxShadow:"0 2px 8px rgba(0,0,0,0.06)"}}>
+        <div style={{color:"#1a1a2e",fontWeight:800,fontSize:15,marginBottom:14}}>🧾 Recent Orders — {periodLabel}</div>
+        {filtered.length===0?<div style={{color:"#ccc",textAlign:"center",padding:"16px 0"}}>No completed orders yet</div>:[...filtered].reverse().slice(0,20).map(order=>(
+          <div key={order.fbKey} style={{borderBottom:"1px solid #f4f1ec",paddingBottom:12,marginBottom:12}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:4}}>
+              <div style={{color:"#f59e0b",fontWeight:700,fontSize:14}}>#{order.queueNum}</div>
+              <div style={{color:"#10b981",fontWeight:700,fontSize:14}}>RM {order.total.toFixed(2)}</div>
             </div>
-          ))}
-        </div>
+            <div style={{color:"#999",fontSize:12}}>{order.items?.map(i=>`${i.emoji}${i.name} ×${i.qty}`).join(", ")}</div>
+            <div style={{color:"#ccc",fontSize:11,marginTop:3}}>{order.time} · {new Date(order.timestamp).toLocaleDateString("en-MY")}</div>
+          </div>
+        ))}
       </div>
     </div>
   );
 }
 
-// ─── ADMIN PANEL ──────────────────────────────────────────────────────────────
-function AdminPanel({ menu, hours, onUpdateMenu, onUpdateHours }) {
+function AdminPanel({ menu, hours, orders, onUpdateMenu, onUpdateHours }) {
   const [tab, setTab] = useState("menu");
   const [activeCategory, setActiveCategory] = useState(menu[0]?.id);
   const [editing, setEditing] = useState(null);
@@ -734,8 +643,8 @@ function AdminPanel({ menu, hours, onUpdateMenu, onUpdateHours }) {
       </div>
 
       <div style={{background:"white",borderBottom:"2px solid #e8e0d5",display:"flex"}}>
-        {[["menu","🍗 Menu"],["hours","🕐 Hours"],["qr","📱 QR"]].map(([val,label])=>(
-          <button key={val} style={{flex:1,padding:"14px",border:"none",background:"none",fontSize:14,fontWeight:700,cursor:"pointer",borderBottom:tab===val?"3px solid #1a1a2e":"3px solid transparent",color:tab===val?"#1a1a2e":"#999"}} onClick={()=>setTab(val)}>{label}</button>
+        {[["menu","🍗 Menu"],["hours","🕐 Hours"],["qr","📱 QR"],["report","📊 Report"]].map(([val,label])=>(
+          <button key={val} style={{flex:1,padding:"14px 4px",border:"none",background:"none",fontSize:13,fontWeight:700,cursor:"pointer",borderBottom:tab===val?"3px solid #1a1a2e":"3px solid transparent",color:tab===val?"#1a1a2e":"#999"}} onClick={()=>setTab(val)}>{label}</button>
         ))}
       </div>
 
@@ -823,6 +732,12 @@ function AdminPanel({ menu, hours, onUpdateMenu, onUpdateHours }) {
           <a href="/qr" target="_blank" style={{...S.greenBtn,textDecoration:"none",padding:"14px 32px",fontSize:15}}>🖨️ Open Printable QR Page</a>
         </div>
       )}
+
+      {tab==="report"&&(
+        <div style={{flex:1,overflowY:"auto",padding:"16px"}}>
+          <SalesReport orders={orders} />
+        </div>
+      )}
     </div>
   );
 }
@@ -860,7 +775,6 @@ function Field({label,value,onChange,placeholder,type="text"}) {
   );
 }
 
-// ─── STYLES ───────────────────────────────────────────────────────────────────
 const S = {
   shell:{minHeight:"100vh",background:"linear-gradient(135deg,#c8102e 0%,#8b0000 100%)",display:"flex",alignItems:"center",justifyContent:"center",fontFamily:"'Segoe UI',sans-serif",padding:"20px"},
   phone:{width:"100%",maxWidth:420,background:"#f9f5f0",borderRadius:32,overflow:"hidden",boxShadow:"0 30px 80px rgba(0,0,0,0.4)",minHeight:700,display:"flex",flexDirection:"column"},
