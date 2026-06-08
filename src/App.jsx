@@ -15,8 +15,6 @@ const firebaseConfig = {
 const firebaseApp = initializeApp(firebaseConfig);
 const db = getDatabase(firebaseApp);
 
-const STALL_PASSWORD = "unclelim123";
-const ADMIN_PASSWORD = "admin888";
 const SESSION_MINUTES = 60;
 
 const DEFAULT_MENU = [
@@ -39,7 +37,20 @@ const DEFAULT_MENU = [
 ];
 
 const DEFAULT_HOURS = { open:"07:00", close:"15:00", days:[1,2,3,4,5], manualOpen:null };
+
+const DEFAULT_BRANDING = {
+  stallName: "Uncle Lim's",
+  tagline: "Block A Canteen · Self Order",
+  primaryColor: "#c8102e",
+};
+
+const DEFAULT_SETTINGS = {
+  stallPassword: "unclelim123",
+  adminPassword: "admin888",
+};
+
 const EMOJIS = ["🍗","🍚","🍱","🥚","🌶️","🥤","🍵","💧","🍜","🥩","🧆","🫙","🧃","🥗","🍲","🫕","🧋","☕"];
+const COLORS = ["#c8102e","#e85d04","#2d6a4f","#1d3557","#7b2d8b","#b5451b","#0077b6","#333333"];
 let nextId = 500;
 function genId() { return nextId++; }
 
@@ -49,7 +60,7 @@ function isWithinHours(hours) {
   const now = new Date();
   const day = now.getDay();
   if (!hours.days.includes(day)) return false;
-  const hhmm = now.getHours() * 60 + now.getMinutes();
+  const hhmm = now.getHours()*60 + now.getMinutes();
   const [oh,om] = hours.open.split(":").map(Number);
   const [ch,cm] = hours.close.split(":").map(Number);
   return hhmm >= oh*60+om && hhmm < ch*60+cm;
@@ -90,26 +101,39 @@ function useFirebaseState() {
   const [orders, setOrders] = useState([]);
   const [currentServing, setCurrentServing] = useState(40);
   const [hours, setHours] = useState(null);
+  const [branding, setBranding] = useState(null);
+  const [settings, setSettings] = useState(null);
 
   useEffect(() => {
+    // Initial loads
     fbGet("menu", null).then(m => { if(m) setMenu(m); else { setMenu(DEFAULT_MENU); fbSet("menu", DEFAULT_MENU); } });
     fbGet("hours", DEFAULT_HOURS).then(h => setHours(h));
+    fbGet("branding", DEFAULT_BRANDING).then(b => setBranding(b));
+    fbGet("settings", DEFAULT_SETTINGS).then(s => setSettings(s));
+
+    // Real-time listeners
     const unsubQ = onValue(ref(db,"currentServing"), s => { if(s.exists()) setCurrentServing(s.val()); });
     const unsubO = onValue(ref(db,"orders"), s => {
       if(s.exists()) { const arr = Object.entries(s.val()).map(([k,v])=>({...v,fbKey:k})); arr.sort((a,b)=>a.timestamp-b.timestamp); setOrders(arr); }
       else setOrders([]);
     });
     const unsubH = onValue(ref(db,"hours"), s => { if(s.exists()) setHours(s.val()); });
-    return () => { unsubQ(); unsubO(); unsubH(); };
+    // ✅ Real-time menu listener — fixes out-of-stock not updating instantly
+    const unsubM = onValue(ref(db,"menu"), s => { if(s.exists()) setMenu(s.val()); });
+    const unsubB = onValue(ref(db,"branding"), s => { if(s.exists()) setBranding(s.val()); });
+
+    return () => { unsubQ(); unsubO(); unsubH(); unsubM(); unsubB(); };
   }, []);
 
-  const updateMenu  = useCallback(async m => { setMenu(m); await fbSet("menu",m); }, []);
-  const updateHours = useCallback(async h => { setHours(h); await fbSet("hours",h); }, []);
-  const addOrder    = useCallback(async o => { await fbPush("orders",o); }, []);
-  const markDone    = useCallback(async k => { await fbUpdate(`orders/${k}`,{status:"done"}); }, []);
-  const advanceQueue = useCallback(async () => { setCurrentServing(p => { const n=p+1; fbSet("currentServing",n); return n; }); }, []);
+  const updateMenu     = useCallback(async m => { await fbSet("menu",m); }, []);
+  const updateHours    = useCallback(async h => { setHours(h); await fbSet("hours",h); }, []);
+  const updateBranding = useCallback(async b => { setBranding(b); await fbSet("branding",b); }, []);
+  const updateSettings = useCallback(async s => { setSettings(s); await fbSet("settings",s); }, []);
+  const addOrder       = useCallback(async o => { await fbPush("orders",o); }, []);
+  const markDone       = useCallback(async k => { await fbUpdate(`orders/${k}`,{status:"done"}); }, []);
+  const advanceQueue   = useCallback(async () => { setCurrentServing(p => { const n=p+1; fbSet("currentServing",n); return n; }); }, []);
 
-  return { menu, orders, currentServing, hours, updateMenu, updateHours, addOrder, markDone, advanceQueue };
+  return { menu, orders, currentServing, hours, branding, settings, updateMenu, updateHours, updateBranding, updateSettings, addOrder, markDone, advanceQueue };
 }
 
 function PasswordGate({ correctPassword, label, icon, children }) {
@@ -135,7 +159,7 @@ function PasswordGate({ correctPassword, label, icon, children }) {
         </div>
         <input type="password" placeholder="Password" value={input} onChange={e=>setInput(e.target.value)} onKeyDown={e=>e.key==="Enter"&&attempt()} autoFocus
           style={{width:"100%",background:"#2a2d3e",border:error?"2px solid #ef4444":"2px solid #3a3d4e",borderRadius:12,padding:"14px 16px",fontSize:16,color:"white",outline:"none",boxSizing:"border-box",fontFamily:"inherit",marginBottom:12}}/>
-        {error && <div style={{color:"#ef4444",fontSize:13,textAlign:"center",marginBottom:12,fontWeight:600}}>❌ Wrong password</div>}
+        {error&&<div style={{color:"#ef4444",fontSize:13,textAlign:"center",marginBottom:12,fontWeight:600}}>❌ Wrong password</div>}
         <button onClick={attempt} style={{width:"100%",background:"#c8102e",color:"white",border:"none",borderRadius:12,padding:"15px",fontSize:15,fontWeight:700,cursor:"pointer"}}>Unlock →</button>
         <div style={{textAlign:"center",marginTop:20}}><a href="/" style={{color:"#444",fontSize:12,textDecoration:"none"}}>← Back to ordering</a></div>
       </div>
@@ -143,24 +167,34 @@ function PasswordGate({ correctPassword, label, icon, children }) {
   );
 }
 
+// PasswordGate that reads password from Firebase settings
+function DynamicPasswordGate({ passwordKey, label, icon, settings, children }) {
+  if (!settings) return <LoadingScreen />;
+  return (
+    <PasswordGate correctPassword={settings[passwordKey]} label={label} icon={icon}>
+      {children}
+    </PasswordGate>
+  );
+}
+
 export default function App() {
   const state = useFirebaseState();
-  if (!state.menu || !state.hours) return <LoadingScreen />;
+  if (!state.menu || !state.hours || !state.branding || !state.settings) return <LoadingScreen />;
   return (
     <BrowserRouter>
       <Routes>
         <Route path="/" element={<OrderGate state={state} />} />
         <Route path="/stall" element={
-          <PasswordGate correctPassword={STALL_PASSWORD} label="Stall Dashboard" icon="🧑‍🍳">
+          <DynamicPasswordGate passwordKey="stallPassword" label="Stall Dashboard" icon="🧑‍🍳" settings={state.settings}>
             <StallDashboard {...state} />
-          </PasswordGate>
+          </DynamicPasswordGate>
         } />
         <Route path="/admin" element={
-          <PasswordGate correctPassword={ADMIN_PASSWORD} label="Admin Panel" icon="⚙️">
-            <AdminPanel menu={state.menu} hours={state.hours} orders={state.orders} onUpdateMenu={state.updateMenu} onUpdateHours={state.updateHours} />
-          </PasswordGate>
+          <DynamicPasswordGate passwordKey="adminPassword" label="Admin Panel" icon="⚙️" settings={state.settings}>
+            <AdminPanel {...state} />
+          </DynamicPasswordGate>
         } />
-        <Route path="/qr" element={<QRPage />} />
+        <Route path="/qr" element={<QRPage branding={state.branding} />} />
         <Route path="*" element={<NotFound />} />
       </Routes>
     </BrowserRouter>
@@ -187,19 +221,20 @@ function NotFound() {
   );
 }
 
-function QRPage() {
+function QRPage({ branding }) {
   const url = window.location.origin;
+  const color = branding?.primaryColor || "#c8102e";
   return (
     <div style={{minHeight:"100vh",background:"white",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",fontFamily:"'Segoe UI',sans-serif",padding:40,gap:24}}>
       <div style={{fontSize:48}}>🍗</div>
-      <div style={{fontSize:28,fontWeight:900,color:"#1a1a2e"}}>Uncle Lim's Chicken Rice</div>
+      <div style={{fontSize:28,fontWeight:900,color:"#1a1a2e"}}>{branding?.stallName || "Uncle Lim's"}</div>
       <div style={{fontSize:16,color:"#666",fontWeight:600}}>Scan to Order</div>
-      <div style={{background:"white",padding:20,borderRadius:20,boxShadow:"0 4px 40px rgba(0,0,0,0.12)",border:"3px solid #c8102e"}}>
+      <div style={{background:"white",padding:20,borderRadius:20,boxShadow:"0 4px 40px rgba(0,0,0,0.12)",border:`3px solid ${color}`}}>
         <img src={`https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(url)}`} alt="QR Code" style={{width:260,height:260,display:"block"}}/>
       </div>
       <div style={{fontSize:14,color:"#999",textAlign:"center",maxWidth:280,lineHeight:1.7}}>
         Point your phone camera at this QR code to start ordering.<br/>
-        <strong style={{color:"#c8102e"}}>Session expires after 60 minutes.</strong>
+        <strong style={{color}}>Session expires after {SESSION_MINUTES} minutes.</strong>
       </div>
       <div style={{background:"#f4f1ec",borderRadius:12,padding:"10px 20px",fontSize:13,color:"#666"}}>{url}</div>
       <button onClick={()=>window.print()} style={{background:"#1a1a2e",color:"white",border:"none",borderRadius:12,padding:"14px 32px",fontSize:15,fontWeight:700,cursor:"pointer"}}>🖨️ Print this QR</button>
@@ -209,9 +244,9 @@ function QRPage() {
 }
 
 function OrderGate({ state }) {
-  const { hours, menu, currentServing, addOrder } = state;
+  const { hours, menu, currentServing, addOrder, branding } = state;
   const [sessionState, setSessionState] = useState("checking");
-  const [secondsLeft, setSecondsLeft] = useState(SESSION_MINUTES * 60);
+  const [secondsLeft, setSecondsLeft] = useState(SESSION_MINUTES*60);
 
   useEffect(() => {
     if (!hours) return;
@@ -228,20 +263,21 @@ function OrderGate({ state }) {
   }, [sessionState]);
 
   if (sessionState==="checking") return <LoadingScreen />;
-  if (sessionState==="closed")   return <ClosedScreen hours={hours} />;
+  if (sessionState==="closed")   return <ClosedScreen hours={hours} branding={branding} />;
   if (sessionState==="expired")  return <ExpiredScreen />;
-  return <OrderFlow menu={menu} currentServing={currentServing} addOrder={addOrder} secondsLeft={secondsLeft} />;
+  return <OrderFlow menu={menu} currentServing={currentServing} addOrder={addOrder} secondsLeft={secondsLeft} branding={branding} />;
 }
 
-function ClosedScreen({ hours }) {
+function ClosedScreen({ hours, branding }) {
   const dayNames = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
   const days = hours.days.map(d=>dayNames[d]).join(", ");
+  const color = branding?.primaryColor || "#c8102e";
   return (
     <div style={{minHeight:"100vh",background:"linear-gradient(135deg,#1a1a2e,#16213e)",display:"flex",alignItems:"center",justifyContent:"center",fontFamily:"'Segoe UI',sans-serif",padding:20}}>
       <div style={{textAlign:"center",maxWidth:340}}>
         <div style={{fontSize:80,marginBottom:16}}>🔒</div>
-        <div style={{color:"white",fontSize:26,fontWeight:900,marginBottom:8}}>Canteen Closed</div>
-        <div style={{color:"#666",fontSize:15,lineHeight:1.7,marginBottom:24}}>Uncle Lim's is currently closed.<br/>Come back during operating hours!</div>
+        <div style={{color:"white",fontSize:26,fontWeight:900,marginBottom:8}}>{branding?.stallName || "Canteen"} Closed</div>
+        <div style={{color:"#666",fontSize:15,lineHeight:1.7,marginBottom:24}}>We're currently closed.<br/>Come back during operating hours!</div>
         <div style={{background:"#1e2130",borderRadius:16,padding:"20px 24px",border:"1px solid #2a2d3e"}}>
           <div style={{color:"#f59e0b",fontWeight:700,fontSize:13,marginBottom:12,textTransform:"uppercase",letterSpacing:"1px"}}>Operating Hours</div>
           <div style={{color:"white",fontSize:18,fontWeight:800}}>{hours.open} – {hours.close}</div>
@@ -258,7 +294,7 @@ function ExpiredScreen() {
       <div style={{textAlign:"center",maxWidth:320}}>
         <div style={{fontSize:80,marginBottom:16}}>⏰</div>
         <div style={{color:"white",fontSize:26,fontWeight:900,marginBottom:8}}>Session Expired</div>
-        <div style={{color:"#666",fontSize:15,lineHeight:1.7,marginBottom:28}}>Your 60-minute ordering session has ended.<br/>Please scan the QR code again to order.</div>
+        <div style={{color:"#666",fontSize:15,lineHeight:1.7,marginBottom:28}}>Your {SESSION_MINUTES}-minute ordering session has ended.<br/>Please scan the QR code again to order.</div>
         <div style={{background:"#1e2130",borderRadius:16,padding:"16px 20px",border:"1px solid #c8102e44"}}>
           <div style={{color:"#c8102e",fontSize:13,fontWeight:700}}>📱 Scan the QR code at the stall to start a new session</div>
         </div>
@@ -267,7 +303,7 @@ function ExpiredScreen() {
   );
 }
 
-function OrderFlow({ menu, currentServing, addOrder, secondsLeft }) {
+function OrderFlow({ menu, currentServing, addOrder, secondsLeft, branding }) {
   const [screen, setScreen] = useState("menu");
   const [cart, setCart] = useState({});
   const [note, setNote] = useState("");
@@ -276,13 +312,32 @@ function OrderFlow({ menu, currentServing, addOrder, secondsLeft }) {
   const [queueNum, setQueueNum] = useState(null);
   const [placing, setPlacing] = useState(false);
 
+  const color = branding?.primaryColor || "#c8102e";
   const cartItems = Object.values(cart).filter(i=>i.qty>0);
   const total = cartItems.reduce((s,i)=>s+i.price*i.qty, 0);
   const totalQty = cartItems.reduce((s,i)=>s+i.qty, 0);
   const isLow = secondsLeft <= 300;
 
-  function add(item) { setCart(p=>({...p,[item.id]:{...item,qty:(p[item.id]?.qty||0)+1}})); }
+  function add(item) {
+    // ✅ Don't allow adding if now out of stock
+    if (item.outOfStock) return;
+    setCart(p=>({...p,[item.id]:{...item,qty:(p[item.id]?.qty||0)+1}}));
+  }
   function remove(id) { setCart(p=>{ const u={...p}; if(u[id]?.qty>1) u[id]={...u[id],qty:u[id].qty-1}; else delete u[id]; return u; }); }
+
+  // ✅ When menu updates, remove out-of-stock items from cart
+  useEffect(() => {
+    if (!menu) return;
+    const allItems = menu.flatMap(g=>g.items);
+    setCart(prev => {
+      const updated = {...prev};
+      Object.keys(updated).forEach(id => {
+        const item = allItems.find(i=>String(i.id)===String(id));
+        if (item?.outOfStock) delete updated[id];
+      });
+      return updated;
+    });
+  }, [menu]);
 
   async function simulatePay() {
     setPayStep("processing");
@@ -299,7 +354,7 @@ function OrderFlow({ menu, currentServing, addOrder, secondsLeft }) {
   const activeGroup = menu.find(g=>g.id===activeCategory);
 
   return (
-    <div style={S.shell}>
+    <div style={{...S.shell, background:`linear-gradient(135deg,${color} 0%,${color}99 100%)`}}>
       <div style={S.phone}>
         <div style={{background:isLow?"#ef4444":"#1a1a2e",padding:"8px 16px",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
           <span style={{color:isLow?"white":"#666",fontSize:12,fontWeight:600}}>{isLow?"⚠️ Session ending soon!":"⏱ Session"}</span>
@@ -307,11 +362,16 @@ function OrderFlow({ menu, currentServing, addOrder, secondsLeft }) {
         </div>
 
         {screen==="menu"&&<>
-          <div style={S.header}>
-            <div style={{flex:1}}><div style={S.stallName}>Uncle Lim's 🍗</div><div style={S.stallSub}>Block A Canteen · Self Order</div></div>
+          <div style={{...S.header, background:color}}>
+            <div style={{flex:1}}>
+              <div style={S.stallName}>{branding?.stallName || "Uncle Lim's"} 🍗</div>
+              <div style={S.stallSub}>{branding?.tagline || "Self Order"}</div>
+            </div>
             <div style={{background:"rgba(255,255,255,0.2)",borderRadius:20,padding:"4px 12px",fontSize:11,fontWeight:700,color:"white"}}>🟢 Open</div>
           </div>
-          <div style={S.tabs}>{menu.map(g=><button key={g.id} style={{...S.tab,...(activeCategory===g.id?S.tabActive:{})}} onClick={()=>setActiveCategory(g.id)}>{g.category}</button>)}</div>
+          <div style={S.tabs}>
+            {menu.map(g=><button key={g.id} style={{...S.tab,...(activeCategory===g.id?{...S.tabActive,color,borderColor:color}:{})}} onClick={()=>setActiveCategory(g.id)}>{g.category}</button>)}
+          </div>
           <div style={S.itemList}>
             {activeGroup?.items.map(item=>{
               const qty=cart[item.id]?.qty||0;
@@ -321,32 +381,32 @@ function OrderFlow({ menu, currentServing, addOrder, secondsLeft }) {
                   <div style={{flex:1}}>
                     <div style={S.itemName}>{item.name} {item.outOfStock&&<span style={S.outBadge}>Out of stock</span>}</div>
                     <div style={S.itemDesc}>{item.desc}</div>
-                    <div style={S.itemPrice}>RM {item.price.toFixed(2)}</div>
+                    <div style={{...S.itemPrice,color}}> RM {item.price.toFixed(2)}</div>
                   </div>
                   {!item.outOfStock&&<div style={S.qtyCtrl}>
-                    {qty>0&&<><button style={S.qtyBtn} onClick={()=>remove(item.id)}>−</button><span style={S.qtyNum}>{qty}</span></>}
-                    <button style={S.addBtn} onClick={()=>add(item)}>+</button>
+                    {qty>0&&<><button style={{...S.qtyBtn,borderColor:color,color}} onClick={()=>remove(item.id)}>−</button><span style={S.qtyNum}>{qty}</span></>}
+                    <button style={{...S.addBtn,background:color}} onClick={()=>add(item)}>+</button>
                   </div>}
                 </div>
               );
             })}
           </div>
-          {totalQty>0&&<button style={S.cartBar} onClick={()=>setScreen("cart")}>
+          {totalQty>0&&<button style={{...S.cartBar,background:color}} onClick={()=>setScreen("cart")}>
             <span style={S.cartBadge}>{totalQty}</span><span>View Order</span><span>RM {total.toFixed(2)}</span>
           </button>}
         </>}
 
         {screen==="cart"&&<>
-          <div style={S.header}><button style={S.backBtn} onClick={()=>setScreen("menu")}>←</button><div style={S.headerTitle}>Your Order</div></div>
+          <div style={{...S.header,background:color}}><button style={S.backBtn} onClick={()=>setScreen("menu")}>←</button><div style={S.headerTitle}>Your Order</div></div>
           <div style={S.itemList}>
             {cartItems.map(item=>(
               <div key={item.id} style={S.cartRow}>
                 <div style={{fontSize:28}}>{item.emoji}</div>
-                <div style={{flex:1}}><div style={S.itemName}>{item.name}</div><div style={S.itemPrice}>RM {item.price.toFixed(2)}</div></div>
+                <div style={{flex:1}}><div style={S.itemName}>{item.name}</div><div style={{...S.itemPrice,color}}>RM {item.price.toFixed(2)}</div></div>
                 <div style={S.qtyCtrl}>
-                  <button style={S.qtyBtn} onClick={()=>remove(item.id)}>−</button>
+                  <button style={{...S.qtyBtn,borderColor:color,color}} onClick={()=>remove(item.id)}>−</button>
                   <span style={S.qtyNum}>{item.qty}</span>
-                  <button style={S.addBtn} onClick={()=>add(item)}>+</button>
+                  <button style={{...S.addBtn,background:color}} onClick={()=>add(item)}>+</button>
                 </div>
               </div>
             ))}
@@ -362,7 +422,7 @@ function OrderFlow({ menu, currentServing, addOrder, secondsLeft }) {
         </>}
 
         {screen==="payment"&&<>
-          <div style={S.header}>
+          <div style={{...S.header,background:color}}>
             {payStep==="qr"&&<button style={S.backBtn} onClick={()=>setScreen("cart")}>←</button>}
             <div style={S.headerTitle}>Payment</div>
           </div>
@@ -387,10 +447,10 @@ function OrderFlow({ menu, currentServing, addOrder, secondsLeft }) {
             <div style={{fontSize:64}}>🎉</div>
             <div style={{fontSize:28,fontWeight:900,color:"#1a1a2e"}}>Order Placed!</div>
             <div style={{fontSize:14,color:"#999",fontWeight:600}}>Your queue number is</div>
-            <div style={{fontSize:96,fontWeight:900,color:"#c8102e",lineHeight:1,letterSpacing:"-4px"}}>{queueNum}</div>
+            <div style={{fontSize:96,fontWeight:900,color,lineHeight:1,letterSpacing:"-4px"}}>{queueNum}</div>
             <div style={{fontSize:14,color:"#666",lineHeight:1.6,maxWidth:280}}>We'll call your number when your food is ready! 🍗</div>
             <div style={{background:"#fff3cd",color:"#856404",padding:"10px 20px",borderRadius:12,fontSize:14,fontWeight:600}}>Now serving: <strong>#{currentServing}</strong></div>
-            <button style={{...S.bigBtn,background:"#c8102e",marginTop:8,width:"auto",padding:"14px 40px"}} onClick={reset}>Order Again</button>
+            <button style={{...S.bigBtn,background:color,marginTop:8,width:"auto",padding:"14px 40px"}} onClick={reset}>Order Again</button>
           </div>
         )}
       </div>
@@ -408,12 +468,13 @@ function FakeQR() {
   );
 }
 
-function StallDashboard({ orders, currentServing, advanceQueue, markDone, hours, updateHours }) {
+function StallDashboard({ orders, currentServing, advanceQueue, markDone, hours, updateHours, branding }) {
   const pending = orders.filter(o=>o.status==="pending");
   const done    = orders.filter(o=>o.status==="done");
   const prevPending = useRef(pending.length);
   const [newOrder, setNewOrder] = useState(false);
   const isOpen = hours ? isWithinHours(hours) : false;
+  const color = branding?.primaryColor || "#c8102e";
 
   useEffect(() => {
     if (pending.length > prevPending.current) { setNewOrder(true); setTimeout(()=>setNewOrder(false),3000); playBeep(); }
@@ -425,9 +486,9 @@ function StallDashboard({ orders, currentServing, advanceQueue, markDone, hours,
       <style>{`@keyframes slidein{from{transform:translateY(-100%)}to{transform:translateY(0)}}`}</style>
       {newOrder&&<div style={{position:"fixed",top:0,left:0,right:0,zIndex:999,background:"#10b981",color:"white",padding:"16px",textAlign:"center",fontSize:16,fontWeight:800,animation:"slidein 0.3s ease"}}>🔔 New Order!</div>}
 
-      <div style={{background:"#1a1a2e",padding:"16px 20px",display:"flex",alignItems:"center",gap:12,borderBottom:"3px solid #c8102e"}}>
+      <div style={{background:"#1a1a2e",padding:"16px 20px",display:"flex",alignItems:"center",gap:12,borderBottom:`3px solid ${color}`}}>
         <div style={{flex:1}}>
-          <div style={{color:"white",fontSize:20,fontWeight:900}}>🧑‍🍳 Stall Dashboard</div>
+          <div style={{color:"white",fontSize:20,fontWeight:900}}>🧑‍🍳 {branding?.stallName || "Stall"} Dashboard</div>
           <div style={{color:"#aaa",fontSize:12,display:"flex",alignItems:"center",gap:6}}>
             <div style={{width:6,height:6,borderRadius:"50%",background:isOpen?"#10b981":"#ef4444"}}></div>
             {isOpen?"Open · Accepting orders":"Closed · Not accepting orders"}
@@ -435,7 +496,7 @@ function StallDashboard({ orders, currentServing, advanceQueue, markDone, hours,
         </div>
         <div style={{textAlign:"right"}}>
           <div style={{color:"#aaa",fontSize:11,fontWeight:600}}>NOW SERVING</div>
-          <div style={{color:"#c8102e",fontSize:32,fontWeight:900,lineHeight:1}}>#{currentServing}</div>
+          <div style={{color,fontSize:32,fontWeight:900,lineHeight:1}}>#{currentServing}</div>
         </div>
       </div>
 
@@ -469,7 +530,7 @@ function StallDashboard({ orders, currentServing, advanceQueue, markDone, hours,
       </div>
 
       <div style={{padding:"0 14px 14px"}}>
-        <button style={{width:"100%",background:"#c8102e",color:"white",border:"none",borderRadius:14,padding:"16px",fontSize:16,fontWeight:800,cursor:"pointer"}} onClick={advanceQueue}>
+        <button style={{width:"100%",background:color,color:"white",border:"none",borderRadius:14,padding:"16px",fontSize:16,fontWeight:800,cursor:"pointer"}} onClick={advanceQueue}>
           📣 Call Next — #{currentServing+1}
         </button>
       </div>
@@ -510,24 +571,15 @@ function StallDashboard({ orders, currentServing, advanceQueue, markDone, hours,
 
 function SalesReport({ orders }) {
   const [period, setPeriod] = useState("today");
-
-  function startOf(p) {
-    const d = new Date();
-    if (p==="today") { d.setHours(0,0,0,0); return d.getTime(); }
-    if (p==="week")  { d.setDate(d.getDate()-7); d.setHours(0,0,0,0); return d.getTime(); }
-    return 0;
-  }
-
+  function startOf(p) { const d=new Date(); if(p==="today"){d.setHours(0,0,0,0);return d.getTime();} if(p==="week"){d.setDate(d.getDate()-7);d.setHours(0,0,0,0);return d.getTime();} return 0; }
   const filtered = orders.filter(o=>o.status==="done"&&o.timestamp>=startOf(period));
   const revenue = filtered.reduce((s,o)=>s+o.total,0);
   const orderCount = filtered.length;
-  const avgOrder = orderCount>0 ? revenue/orderCount : 0;
-
+  const avgOrder = orderCount>0?revenue/orderCount:0;
   const itemMap = {};
   filtered.forEach(o=>{ o.items?.forEach(item=>{ if(!itemMap[item.name]) itemMap[item.name]={name:item.name,emoji:item.emoji,qty:0,revenue:0}; itemMap[item.name].qty+=item.qty; itemMap[item.name].revenue+=item.price*item.qty; }); });
   const topItems = Object.values(itemMap).sort((a,b)=>b.qty-a.qty).slice(0,5);
   const maxCount = Math.max(...topItems.map(i=>i.qty),1);
-
   const byHour = Array(24).fill(0);
   filtered.forEach(o=>{ const h=new Date(o.timestamp).getHours(); byHour[h]++; });
   const peakHour = byHour.indexOf(Math.max(...byHour));
@@ -536,20 +588,13 @@ function SalesReport({ orders }) {
 
   return (
     <div style={{display:"flex",flexDirection:"column",gap:14}}>
-      <div style={{display:"flex",gap:8,padding:"0 0 4px"}}>
+      <div style={{display:"flex",gap:8,paddingBottom:4}}>
         {[["today","Today"],["week","7 Days"],["all","All Time"]].map(([val,label])=>(
-          <button key={val} onClick={()=>setPeriod(val)} style={{flex:1,padding:"10px",border:"none",borderRadius:10,fontSize:13,fontWeight:700,cursor:"pointer",background:period===val?"#c8102e":"#f0ebe4",color:period===val?"white":"#888"}}>
-            {label}
-          </button>
+          <button key={val} onClick={()=>setPeriod(val)} style={{flex:1,padding:"10px",border:"none",borderRadius:10,fontSize:13,fontWeight:700,cursor:"pointer",background:period===val?"#c8102e":"#f0ebe4",color:period===val?"white":"#888"}}>{label}</button>
         ))}
       </div>
-
       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:10}}>
-        {[
-          {label:"Revenue",value:`RM ${revenue.toFixed(2)}`,color:"#10b981",bg:"#ecfdf5",icon:"💰"},
-          {label:"Orders",value:orderCount,color:"#3b82f6",bg:"#eff6ff",icon:"🧾"},
-          {label:"Avg Order",value:`RM ${avgOrder.toFixed(2)}`,color:"#f59e0b",bg:"#fffbeb",icon:"📈"},
-        ].map(s=>(
+        {[{label:"Revenue",value:`RM ${revenue.toFixed(2)}`,color:"#10b981",bg:"#ecfdf5",icon:"💰"},{label:"Orders",value:orderCount,color:"#3b82f6",bg:"#eff6ff",icon:"🧾"},{label:"Avg Order",value:`RM ${avgOrder.toFixed(2)}`,color:"#f59e0b",bg:"#fffbeb",icon:"📈"}].map(s=>(
           <div key={s.label} style={{background:s.bg,borderRadius:14,padding:"14px 10px",textAlign:"center",border:`1px solid ${s.color}33`}}>
             <div style={{fontSize:18,marginBottom:4}}>{s.icon}</div>
             <div style={{color:s.color,fontSize:s.label==="Orders"?22:12,fontWeight:900,lineHeight:1.2}}>{s.value}</div>
@@ -557,7 +602,6 @@ function SalesReport({ orders }) {
           </div>
         ))}
       </div>
-
       <div style={{background:"white",borderRadius:16,padding:"18px",boxShadow:"0 2px 8px rgba(0,0,0,0.06)"}}>
         <div style={{color:"#1a1a2e",fontWeight:800,fontSize:15,marginBottom:16}}>🏆 Top Items — {periodLabel}</div>
         {topItems.length===0?<div style={{color:"#ccc",textAlign:"center",padding:"16px 0"}}>No sales data yet</div>:topItems.map((item,i)=>(
@@ -568,18 +612,12 @@ function SalesReport({ orders }) {
                 <div style={{fontSize:18}}>{item.emoji}</div>
                 <div style={{color:"#1a1a2e",fontSize:13,fontWeight:600}}>{item.name}</div>
               </div>
-              <div style={{textAlign:"right"}}>
-                <div style={{color:"#10b981",fontSize:13,fontWeight:700}}>×{item.qty}</div>
-                <div style={{color:"#aaa",fontSize:11}}>RM {item.revenue.toFixed(2)}</div>
-              </div>
+              <div style={{textAlign:"right"}}><div style={{color:"#10b981",fontSize:13,fontWeight:700}}>×{item.qty}</div><div style={{color:"#aaa",fontSize:11}}>RM {item.revenue.toFixed(2)}</div></div>
             </div>
-            <div style={{background:"#f4f1ec",borderRadius:8,height:8,overflow:"hidden"}}>
-              <div style={{background:"linear-gradient(90deg,#c8102e,#f59e0b)",height:"100%",borderRadius:8,width:`${(item.qty/maxCount)*100}%`}}/>
-            </div>
+            <div style={{background:"#f4f1ec",borderRadius:8,height:8,overflow:"hidden"}}><div style={{background:"linear-gradient(90deg,#c8102e,#f59e0b)",height:"100%",borderRadius:8,width:`${(item.qty/maxCount)*100}%`}}/></div>
           </div>
         ))}
       </div>
-
       <div style={{background:"white",borderRadius:16,padding:"18px",boxShadow:"0 2px 8px rgba(0,0,0,0.06)"}}>
         <div style={{color:"#1a1a2e",fontWeight:800,fontSize:15,marginBottom:4}}>⏰ Busiest Hours — {periodLabel}</div>
         {byHour.every(h=>h===0)?<div style={{color:"#ccc",textAlign:"center",padding:"16px 0"}}>No data yet</div>:<>
@@ -594,7 +632,6 @@ function SalesReport({ orders }) {
           </div>
         </>}
       </div>
-
       <div style={{background:"white",borderRadius:16,padding:"18px",boxShadow:"0 2px 8px rgba(0,0,0,0.06)"}}>
         <div style={{color:"#1a1a2e",fontWeight:800,fontSize:15,marginBottom:14}}>🧾 Recent Orders — {periodLabel}</div>
         {filtered.length===0?<div style={{color:"#ccc",textAlign:"center",padding:"16px 0"}}>No completed orders yet</div>:[...filtered].reverse().slice(0,20).map(order=>(
@@ -612,7 +649,7 @@ function SalesReport({ orders }) {
   );
 }
 
-function AdminPanel({ menu, hours, orders, onUpdateMenu, onUpdateHours }) {
+function AdminPanel({ menu, hours, orders, branding, settings, onUpdateMenu, onUpdateHours, updateBranding, updateSettings }) {
   const [tab, setTab] = useState("menu");
   const [activeCategory, setActiveCategory] = useState(menu[0]?.id);
   const [editing, setEditing] = useState(null);
@@ -621,6 +658,9 @@ function AdminPanel({ menu, hours, orders, onUpdateMenu, onUpdateHours }) {
   const [addingCat, setAddingCat] = useState(false);
   const [saved, setSaved] = useState(false);
   const [localHours, setLocalHours] = useState(hours);
+  const [localBranding, setLocalBranding] = useState(branding);
+  const [localSettings, setLocalSettings] = useState(settings);
+  const [showPasswords, setShowPasswords] = useState({ stall:false, admin:false });
   const DAY_NAMES = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
   const activeGroup = menu.find(g=>g.id===activeCategory);
 
@@ -633,6 +673,13 @@ function AdminPanel({ menu, hours, orders, onUpdateMenu, onUpdateHours }) {
   function deleteCategory(catId) { if(menu.length<=1) return; const u=menu.filter(g=>g.id!==catId); onUpdateMenu(u); setActiveCategory(u[0].id); showSaved(); }
   function saveHours() { onUpdateHours(localHours); showSaved(); }
   function toggleDay(d) { const days=localHours.days.includes(d)?localHours.days.filter(x=>x!==d):[...localHours.days,d]; setLocalHours({...localHours,days}); }
+  function saveBranding() { updateBranding(localBranding); showSaved(); }
+  function saveSettings() {
+    if (!localSettings.stallPassword.trim() || !localSettings.adminPassword.trim()) return alert("Passwords cannot be empty!");
+    updateSettings(localSettings); showSaved();
+  }
+
+  const color = localBranding?.primaryColor || "#c8102e";
 
   return (
     <div style={{minHeight:"100vh",background:"#f4f1ec",fontFamily:"'Segoe UI',sans-serif",display:"flex",flexDirection:"column"}}>
@@ -642,12 +689,13 @@ function AdminPanel({ menu, hours, orders, onUpdateMenu, onUpdateHours }) {
         <a href="/" style={{background:"rgba(255,255,255,0.1)",color:"white",borderRadius:8,padding:"8px 14px",fontSize:13,fontWeight:600,textDecoration:"none"}}>← Exit</a>
       </div>
 
-      <div style={{background:"white",borderBottom:"2px solid #e8e0d5",display:"flex"}}>
-        {[["menu","🍗 Menu"],["hours","🕐 Hours"],["qr","📱 QR"],["report","📊 Report"]].map(([val,label])=>(
-          <button key={val} style={{flex:1,padding:"14px 4px",border:"none",background:"none",fontSize:13,fontWeight:700,cursor:"pointer",borderBottom:tab===val?"3px solid #1a1a2e":"3px solid transparent",color:tab===val?"#1a1a2e":"#999"}} onClick={()=>setTab(val)}>{label}</button>
+      <div style={{background:"white",borderBottom:"2px solid #e8e0d5",display:"flex",overflowX:"auto"}}>
+        {[["menu","🍗 Menu"],["hours","🕐 Hours"],["qr","📱 QR"],["branding","🎨 Brand"],["settings","🔐 Settings"],["report","📊 Report"]].map(([val,label])=>(
+          <button key={val} style={{flex:1,padding:"12px 4px",border:"none",background:"none",fontSize:12,fontWeight:700,cursor:"pointer",borderBottom:tab===val?`3px solid #1a1a2e`:"3px solid transparent",color:tab===val?"#1a1a2e":"#999",whiteSpace:"nowrap"}} onClick={()=>setTab(val)}>{label}</button>
         ))}
       </div>
 
+      {/* MENU TAB */}
       {tab==="menu"&&<>
         <div style={{background:"white",borderBottom:"2px solid #e8e0d5",padding:"0 12px",display:"flex",alignItems:"center",overflowX:"auto",gap:4}}>
           {menu.map(g=><button key={g.id} style={{...S.tab,...(activeCategory===g.id?{...S.tabActive,color:"#1a1a2e",borderColor:"#1a1a2e"}:{})}} onClick={()=>setActiveCategory(g.id)}>{g.category}</button>)}
@@ -688,6 +736,7 @@ function AdminPanel({ menu, hours, orders, onUpdateMenu, onUpdateHours }) {
         </div>
       </>}
 
+      {/* HOURS TAB */}
       {tab==="hours"&&(
         <div style={{flex:1,overflowY:"auto",padding:"16px",display:"flex",flexDirection:"column",gap:16}}>
           <div style={{background:"white",borderRadius:16,padding:"20px",boxShadow:"0 2px 8px rgba(0,0,0,0.06)"}}>
@@ -714,7 +763,7 @@ function AdminPanel({ menu, hours, orders, onUpdateMenu, onUpdateHours }) {
             <div style={{fontWeight:800,fontSize:15,color:"#1a1a2e",marginBottom:4}}>⏱ Session Duration</div>
             <div style={{color:"#999",fontSize:13,marginBottom:16}}>How long students can order after scanning QR</div>
             <div style={{background:"#f4f1ec",borderRadius:12,padding:"16px",textAlign:"center"}}>
-              <div style={{fontSize:36,fontWeight:900,color:"#c8102e"}}>60</div>
+              <div style={{fontSize:36,fontWeight:900,color:"#c8102e"}}>{SESSION_MINUTES}</div>
               <div style={{color:"#666",fontSize:13,fontWeight:600}}>minutes per session</div>
               <div style={{color:"#aaa",fontSize:11,marginTop:6}}>To change, edit SESSION_MINUTES in App.jsx</div>
             </div>
@@ -722,17 +771,105 @@ function AdminPanel({ menu, hours, orders, onUpdateMenu, onUpdateHours }) {
         </div>
       )}
 
+      {/* QR TAB */}
       {tab==="qr"&&(
         <div style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:24,gap:16}}>
           <div style={{fontSize:15,fontWeight:700,color:"#1a1a2e"}}>Your Ordering QR Code</div>
-          <div style={{background:"white",padding:16,borderRadius:16,boxShadow:"0 4px 24px rgba(0,0,0,0.1)",border:"3px solid #c8102e"}}>
+          <div style={{background:"white",padding:16,borderRadius:16,boxShadow:"0 4px 24px rgba(0,0,0,0.1)",border:`3px solid ${color}`}}>
             <img src={`https://api.qrserver.com/v1/create-qr-code/?size=240x240&data=${encodeURIComponent(window.location.origin)}`} alt="QR" style={{width:220,height:220,display:"block"}}/>
           </div>
-          <div style={{fontSize:13,color:"#999",textAlign:"center",maxWidth:260,lineHeight:1.7}}>Print this and stick it on your table.<br/>Students scan → 60 min session → auto expires.</div>
+          <div style={{fontSize:13,color:"#999",textAlign:"center",maxWidth:260,lineHeight:1.7}}>Print this and stick it on your table.<br/>Students scan → {SESSION_MINUTES} min session → auto expires.</div>
           <a href="/qr" target="_blank" style={{...S.greenBtn,textDecoration:"none",padding:"14px 32px",fontSize:15}}>🖨️ Open Printable QR Page</a>
         </div>
       )}
 
+      {/* BRANDING TAB */}
+      {tab==="branding"&&(
+        <div style={{flex:1,overflowY:"auto",padding:"16px",display:"flex",flexDirection:"column",gap:16}}>
+          <div style={{background:"white",borderRadius:16,padding:"20px",boxShadow:"0 2px 8px rgba(0,0,0,0.06)"}}>
+            <div style={{fontWeight:800,fontSize:15,color:"#1a1a2e",marginBottom:16}}>🎨 Stall Branding</div>
+            <Field label="Stall Name" value={localBranding.stallName} onChange={v=>setLocalBranding({...localBranding,stallName:v})} placeholder="e.g. Uncle Lim's"/>
+            <Field label="Tagline" value={localBranding.tagline} onChange={v=>setLocalBranding({...localBranding,tagline:v})} placeholder="e.g. Block A Canteen · Self Order"/>
+            <div style={{marginBottom:20}}>
+              <div style={{fontSize:11,fontWeight:600,color:"#999",marginBottom:10}}>Primary Colour</div>
+              <div style={{display:"flex",gap:10,flexWrap:"wrap"}}>
+                {COLORS.map(c=>(
+                  <button key={c} onClick={()=>setLocalBranding({...localBranding,primaryColor:c})}
+                    style={{width:44,height:44,borderRadius:22,background:c,border:localBranding.primaryColor===c?"4px solid #1a1a2e":"4px solid transparent",cursor:"pointer",transition:"transform 0.1s",transform:localBranding.primaryColor===c?"scale(1.15)":"scale(1)"}}/>
+                ))}
+              </div>
+            </div>
+            {/* Preview */}
+            <div style={{background:"#f4f1ec",borderRadius:12,padding:"16px",marginBottom:16}}>
+              <div style={{fontSize:11,fontWeight:600,color:"#999",marginBottom:10}}>Preview</div>
+              <div style={{background:localBranding.primaryColor,borderRadius:12,padding:"14px 16px",color:"white"}}>
+                <div style={{fontWeight:800,fontSize:16}}>{localBranding.stallName || "Stall Name"} 🍗</div>
+                <div style={{fontSize:12,opacity:0.8,marginTop:3}}>{localBranding.tagline || "Tagline"}</div>
+              </div>
+            </div>
+            <button style={{...S.greenBtn,width:"100%",padding:"14px",fontSize:15}} onClick={saveBranding}>Save Branding</button>
+          </div>
+        </div>
+      )}
+
+      {/* SETTINGS TAB */}
+      {tab==="settings"&&(
+        <div style={{flex:1,overflowY:"auto",padding:"16px",display:"flex",flexDirection:"column",gap:16}}>
+          <div style={{background:"white",borderRadius:16,padding:"20px",boxShadow:"0 2px 8px rgba(0,0,0,0.06)"}}>
+            <div style={{fontWeight:800,fontSize:15,color:"#1a1a2e",marginBottom:4}}>🔐 Change Passwords</div>
+            <div style={{color:"#999",fontSize:13,marginBottom:20}}>Change passwords for the stall dashboard and admin panel.</div>
+
+            <div style={{marginBottom:16}}>
+              <div style={{fontSize:11,fontWeight:600,color:"#999",marginBottom:6}}>Stall Dashboard Password</div>
+              <div style={{position:"relative"}}>
+                <input type={showPasswords.stall?"text":"password"} value={localSettings.stallPassword} onChange={e=>setLocalSettings({...localSettings,stallPassword:e.target.value})}
+                  style={{width:"100%",border:"1.5px solid #e0d9d0",borderRadius:8,padding:"10px 40px 10px 10px",fontSize:13,outline:"none",boxSizing:"border-box"}}/>
+                <button onClick={()=>setShowPasswords(p=>({...p,stall:!p.stall}))} style={{position:"absolute",right:10,top:"50%",transform:"translateY(-50%)",background:"none",border:"none",cursor:"pointer",fontSize:16}}>
+                  {showPasswords.stall?"🙈":"👁️"}
+                </button>
+              </div>
+            </div>
+
+            <div style={{marginBottom:20}}>
+              <div style={{fontSize:11,fontWeight:600,color:"#999",marginBottom:6}}>Admin Panel Password</div>
+              <div style={{position:"relative"}}>
+                <input type={showPasswords.admin?"text":"password"} value={localSettings.adminPassword} onChange={e=>setLocalSettings({...localSettings,adminPassword:e.target.value})}
+                  style={{width:"100%",border:"1.5px solid #e0d9d0",borderRadius:8,padding:"10px 40px 10px 10px",fontSize:13,outline:"none",boxSizing:"border-box"}}/>
+                <button onClick={()=>setShowPasswords(p=>({...p,admin:!p.admin}))} style={{position:"absolute",right:10,top:"50%",transform:"translateY(-50%)",background:"none",border:"none",cursor:"pointer",fontSize:16}}>
+                  {showPasswords.admin?"🙈":"👁️"}
+                </button>
+              </div>
+            </div>
+
+            <div style={{background:"#fff3cd",borderRadius:10,padding:"12px 14px",marginBottom:16}}>
+              <div style={{color:"#856404",fontSize:12,fontWeight:600}}>⚠️ After saving, you'll need the new password to log back in. Don't forget it!</div>
+            </div>
+            <button style={{...S.greenBtn,width:"100%",padding:"14px",fontSize:15}} onClick={saveSettings}>Save Passwords</button>
+          </div>
+
+          <div style={{background:"white",borderRadius:16,padding:"20px",boxShadow:"0 2px 8px rgba(0,0,0,0.06)"}}>
+            <div style={{fontWeight:800,fontSize:15,color:"#1a1a2e",marginBottom:4}}>📋 Your URLs</div>
+            <div style={{color:"#999",fontSize:13,marginBottom:16}}>Share these with the right people only.</div>
+            {[
+              {label:"Student Ordering",url:"/",icon:"🛒"},
+              {label:"Stall Dashboard",url:"/stall",icon:"🧑‍🍳"},
+              {label:"Admin Panel",url:"/admin",icon:"⚙️"},
+              {label:"Printable QR",url:"/qr",icon:"📱"},
+            ].map(item=>(
+              <div key={item.url} style={{display:"flex",alignItems:"center",gap:12,padding:"10px 0",borderBottom:"1px solid #f4f1ec"}}>
+                <span style={{fontSize:20}}>{item.icon}</span>
+                <div style={{flex:1}}>
+                  <div style={{fontSize:13,fontWeight:700,color:"#1a1a2e"}}>{item.label}</div>
+                  <div style={{fontSize:12,color:"#aaa"}}>{window.location.origin}{item.url}</div>
+                </div>
+                <button onClick={()=>navigator.clipboard.writeText(window.location.origin+item.url)} style={{...S.ghostBtn,fontSize:12,padding:"6px 12px"}}>Copy</button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* REPORT TAB */}
       {tab==="report"&&(
         <div style={{flex:1,overflowY:"auto",padding:"16px"}}>
           <SalesReport orders={orders} />
