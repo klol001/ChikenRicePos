@@ -702,14 +702,21 @@ function AdminPanel({ menu, hours, orders, branding, settings, updateMenu, updat
   const [addingCat, setAddingCat] = useState(false);
   const [saved, setSaved] = useState(false);
   const [localHours, setLocalHours] = useState(hours);
-  // Sync localHours when Firebase updates hours
-  useEffect(() => { setLocalHours(hours); }, [hours]);
   const [localBranding, setLocalBranding] = useState(branding);
-  // Sync localBranding when Firebase updates
-  useEffect(() => { setLocalBranding(branding); }, [branding]);
   const [localSettings, setLocalSettings] = useState(settings);
-  // Sync localSettings when Firebase updates
-  useEffect(() => { setLocalSettings(settings); }, [settings]);
+  const hoursInitialized = useRef(false);
+  const brandingInitialized = useRef(false);
+  const settingsInitialized = useRef(false);
+  // Only sync on first load, not every Firebase update (which would reset user edits)
+  useEffect(() => {
+    if (!hoursInitialized.current && hours) { setLocalHours(hours); hoursInitialized.current = true; }
+  }, [hours]);
+  useEffect(() => {
+    if (!brandingInitialized.current && branding) { setLocalBranding(branding); brandingInitialized.current = true; }
+  }, [branding]);
+  useEffect(() => {
+    if (!settingsInitialized.current && settings) { setLocalSettings(settings); settingsInitialized.current = true; }
+  }, [settings]);
   const [showPasswords, setShowPasswords] = useState({ stall:false, admin:false });
   const DAY_NAMES = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
   const activeGroup = menu.find(g=>g.id===activeCategory);
