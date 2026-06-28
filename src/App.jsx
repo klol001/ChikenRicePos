@@ -571,8 +571,11 @@ function StallDashboard({ orders, currentServing, advanceQueue, markDone, hours,
 
 function SalesReport({ orders }) {
   const [period, setPeriod] = useState("today");
-  function startOf(p) { const d=new Date(); if(p==="today"){d.setHours(0,0,0,0);return d.getTime();} if(p==="week"){d.setDate(d.getDate()-7);d.setHours(0,0,0,0);return d.getTime();} return 0; }
-  const filtered = orders.filter(o=>o.status==="done"&&o.timestamp>=startOf(period));
+  const now = new Date();
+  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  const startOfWeek = new Date(now.getFullYear(), now.getMonth(), now.getDate()-7).getTime();
+  const cutoff = period==="today" ? startOfToday : period==="week" ? startOfWeek : 0;
+  const filtered = orders.filter(o=>o.status==="done" && o.timestamp >= cutoff);
   const revenue = filtered.reduce((s,o)=>s+o.total,0);
   const orderCount = filtered.length;
   const avgOrder = orderCount>0?revenue/orderCount:0;
