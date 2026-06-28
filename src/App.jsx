@@ -106,8 +106,33 @@ function useFirebaseState() {
 
   useEffect(() => {
     // Initial loads
-    fbGet("menu", null).then(m => { if(m) setMenu(m); else { setMenu(DEFAULT_MENU); fbSet("menu", DEFAULT_MENU); } });
-    fbGet("hours", DEFAULT_HOURS).then(h => setHours(h));
+    fbGet("menu", null).then(m => {
+      if(m) {
+        // Convert Firebase object back to array if needed
+        const parseMenu = (val) => {
+          const cats = Array.isArray(val) ? val : Object.values(val);
+          return cats.map(cat => ({
+            ...cat,
+            items: cat.items
+              ? (Array.isArray(cat.items) ? cat.items : Object.values(cat.items))
+              : []
+          }));
+        };
+        setMenu(parseMenu(m));
+      } else {
+        setMenu(DEFAULT_MENU);
+        fbSet("menu", DEFAULT_MENU);
+      }
+    });
+    fbGet("hours", DEFAULT_HOURS).then(h => {
+      if (h) {
+        // Ensure days is array
+        const parsed = {...h, days: Array.isArray(h.days) ? h.days : Object.values(h.days || [])};
+        setHours(parsed);
+      } else {
+        setHours(DEFAULT_HOURS);
+      }
+    });
     fbGet("branding", DEFAULT_BRANDING).then(b => setBranding(b));
     fbGet("settings", DEFAULT_SETTINGS).then(s => setSettings(s));
 
@@ -117,15 +142,31 @@ function useFirebaseState() {
       if(s.exists()) { const arr = Object.entries(s.val()).map(([k,v])=>({...v,fbKey:k})); arr.sort((a,b)=>a.timestamp-b.timestamp); setOrders(arr); }
       else setOrders([]);
     });
-    const unsubH = onValue(ref(db,"hours"), s => { if(s.exists()) setHours(s.val()); });
+    const unsubH = onValue(ref(db,"hours"), s => {
+      if(s.exists()) {
+        const h = s.val();
+        const parsed = {...h, days: Array.isArray(h.days) ? h.days : Object.values(h.days || [])};
+        setHours(parsed);
+      }
+    });
     // ✅ Real-time menu listener — fixes out-of-stock not updating instantly
-    const unsubM = onValue(ref(db,"menu"), s => { if(s.exists()) setMenu(s.val()); });
+    const unsubM = onValue(ref(db,"menu"), s => {
+      if(s.exists()) {
+        const val = s.val();
+        const cats = Array.isArray(val) ? val : Object.values(val);
+        const parsed = cats.map(cat => ({
+          ...cat,
+          items: cat.items ? (Array.isArray(cat.items) ? cat.items : Object.values(cat.items)) : []
+        }));
+        setMenu(parsed);
+      }
+    });
     const unsubB = onValue(ref(db,"branding"), s => { if(s.exists()) setBranding(s.val()); });
 
     return () => { unsubQ(); unsubO(); unsubH(); unsubM(); unsubB(); };
   }, []);
 
-  const updateMenu     = useCallback(async m => { await fbSet("menu",m); }, []);
+  const updateMenu     = useCallback(async m => { setMenu(m); await fbSet("menu",m); }, []);
   const updateHours    = useCallback(async h => { setHours(h); await fbSet("hours",h); }, []);
   const updateBranding = useCallback(async b => { setBranding(b); await fbSet("branding",b); }, []);
   const updateSettings = useCallback(async s => { setSettings(s); await fbSet("settings",s); }, []);
