@@ -652,7 +652,7 @@ function SalesReport({ orders }) {
   );
 }
 
-function AdminPanel({ menu, hours, orders, branding, settings, onUpdateMenu, onUpdateHours, updateBranding, updateSettings }) {
+function AdminPanel({ menu, hours, orders, branding, settings, updateMenu, updateHours, updateBranding, updateSettings }) {
   const [tab, setTab] = useState("menu");
   const [activeCategory, setActiveCategory] = useState(menu[0]?.id);
   const [editing, setEditing] = useState(null);
@@ -661,20 +661,26 @@ function AdminPanel({ menu, hours, orders, branding, settings, onUpdateMenu, onU
   const [addingCat, setAddingCat] = useState(false);
   const [saved, setSaved] = useState(false);
   const [localHours, setLocalHours] = useState(hours);
+  // Sync localHours when Firebase updates hours
+  useEffect(() => { setLocalHours(hours); }, [hours]);
   const [localBranding, setLocalBranding] = useState(branding);
+  // Sync localBranding when Firebase updates
+  useEffect(() => { setLocalBranding(branding); }, [branding]);
   const [localSettings, setLocalSettings] = useState(settings);
+  // Sync localSettings when Firebase updates
+  useEffect(() => { setLocalSettings(settings); }, [settings]);
   const [showPasswords, setShowPasswords] = useState({ stall:false, admin:false });
   const DAY_NAMES = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
   const activeGroup = menu.find(g=>g.id===activeCategory);
 
   function showSaved() { setSaved(true); setTimeout(()=>setSaved(false),2000); }
-  function toggleStock(catId,itemId) { onUpdateMenu(menu.map(g=>g.id===catId?{...g,items:g.items.map(i=>i.id===itemId?{...i,outOfStock:!i.outOfStock}:i)}:g)); showSaved(); }
-  function deleteItem(catId,itemId) { onUpdateMenu(menu.map(g=>g.id===catId?{...g,items:g.items.filter(i=>i.id!==itemId)}:g)); showSaved(); }
-  function saveEdit(catId,updatedItem) { onUpdateMenu(menu.map(g=>g.id===catId?{...g,items:g.items.map(i=>i.id===updatedItem.id?updatedItem:i)}:g)); setEditing(null); showSaved(); }
-  function addItem(catId,item) { onUpdateMenu(menu.map(g=>g.id===catId?{...g,items:[...g.items,{...item,id:genId(),outOfStock:false}]}:g)); setAdding(false); showSaved(); }
-  function addCategory() { if(!newCatName.trim()) return; onUpdateMenu([...menu,{id:genId(),category:newCatName.trim(),items:[]}]); setNewCatName(""); setAddingCat(false); showSaved(); }
-  function deleteCategory(catId) { if(menu.length<=1) return; const u=menu.filter(g=>g.id!==catId); onUpdateMenu(u); setActiveCategory(u[0].id); showSaved(); }
-  function saveHours() { onUpdateHours(localHours); showSaved(); }
+  function toggleStock(catId,itemId) { updateMenu(menu.map(g=>g.id===catId?{...g,items:g.items.map(i=>i.id===itemId?{...i,outOfStock:!i.outOfStock}:i)}:g)); showSaved(); }
+  function deleteItem(catId,itemId) { updateMenu(menu.map(g=>g.id===catId?{...g,items:g.items.filter(i=>i.id!==itemId)}:g)); showSaved(); }
+  function saveEdit(catId,updatedItem) { updateMenu(menu.map(g=>g.id===catId?{...g,items:g.items.map(i=>i.id===updatedItem.id?updatedItem:i)}:g)); setEditing(null); showSaved(); }
+  function addItem(catId,item) { updateMenu(menu.map(g=>g.id===catId?{...g,items:[...g.items,{...item,id:genId(),outOfStock:false}]}:g)); setAdding(false); showSaved(); }
+  function addCategory() { if(!newCatName.trim()) return; updateMenu([...menu,{id:genId(),category:newCatName.trim(),items:[]}]); setNewCatName(""); setAddingCat(false); showSaved(); }
+  function deleteCategory(catId) { if(menu.length<=1) return; const u=menu.filter(g=>g.id!==catId); updateMenu(u); setActiveCategory(u[0].id); showSaved(); }
+  function saveHours() { updateHours(localHours); showSaved(); }
   function toggleDay(d) { const days=localHours.days.includes(d)?localHours.days.filter(x=>x!==d):[...localHours.days,d]; setLocalHours({...localHours,days}); }
   function saveBranding() { updateBranding(localBranding); showSaved(); }
   function saveSettings() {
